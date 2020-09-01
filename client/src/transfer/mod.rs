@@ -151,4 +151,79 @@ pub mod transfer {
             self.key.as_ref()
         }
     }
+
+    pub struct Download {
+        conn: TcpStream,
+        crypter: Option<Crypter>,
+        key: Option<[u8; 32]>,
+        decrypt_buffer: Vec<u8>,
+        finalized: bool,
+    }
+
+    impl Download {
+        pub fn new<A: ToSocketAddrs>(
+            addr: A,
+            id: &[u8; 32],
+            key: Option<[u8; 32]>,
+        ) -> Result<Self, TransferError> {
+            let mut conn = TcpStream::connect(addr)?;
+            let mut message = Message::new();
+            message.write_i32(1);
+            message.write_buffer(id);
+            conn.wait_until_ready()?;
+            conn.write_blocking(&message)?;
+            Ok(Self {
+                conn,
+                crypter: None,
+                key,
+                decrypt_buffer: Vec::new(),
+                finalized: false,
+            })
+        }
+
+        pub fn read(&mut self) -> Result<(Vec<u8>, bool), TransferError> {
+            if self.finalized {
+                return Ok((Vec::new(), false));
+            }
+            let mut message = self.conn.read_blocking()?;
+            let cont = message.read_u8()?;
+            if cont == 0 {
+                return match &mut self.crypter {
+                    None => Ok((Vec::new(), false)),
+                    Some(crypter) => {
+                        let bytes_decrypted = crypter.finalize(&mut self.decrypt_buffer)?;
+                        self.finalized = true;
+                        Ok((self.decrypt_buffer[..bytes_decrypted].to_vec(), true))
+                    }
+                };
+            }
+
+            let mut buffer = message.read_buffer()?;
+            if self.key.is_some() && self.crypter.is_none() {
+                if buffer.len() < 16 {
+                    panic!("IV split");
+                }
+
+                self.crypter = Some(Crypter::new(
+                    Cipher::aes_256_cbc(),
+                    Mode::Decrypt,
+                    &self.key.unwrap(),
+                    Some(&buffer[..16]),
+                )?);
+
+                buffer.drain(..16);
+            }
+            return match &mut self.crypter {
+                None => Ok((buffer, true)),
+                Some(crypter) => {
+                    if self.decrypt_buffer.len() < buffer.len() + 256 {
+                        self.decrypt_buffer.resize(buffer.len() + 256, 0);
+                    }
+                    let bytes_decrypted = crypter.update(&buffer, &mut self.decrypt_buffer)?;
+
+                    Ok((self.decrypt_buffer[..bytes_decrypted].to_vec(), true))
+                }
+            };
+        }
+    }
 }

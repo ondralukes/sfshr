@@ -9,7 +9,7 @@ pub mod thread_pool {
     use simpletcp::simpletcp::{Error, Message, MessageError, TcpStream};
     use std::fs::{remove_file, File};
     use std::io;
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::PathBuf;
     use std::string::FromUtf8Error;
     use std::sync::atomic::AtomicUsize;
@@ -17,6 +17,13 @@ pub mod thread_pool {
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::sync::Arc;
     use std::thread::{spawn, JoinHandle};
+
+    #[cfg(unix)]
+    use std::os::unix::io::AsRawFd;
+
+    use simpletcp::utils::{poll_timeout, EV_POLLIN, EV_POLLOUT};
+    #[cfg(windows)]
+    use std::os::unix::io::AsRawSocket;
 
     pub struct ThreadPool {
         threads: Vec<Thread>,
@@ -138,13 +145,176 @@ pub mod thread_pool {
     struct Client {
         socket: TcpStream,
         state: ClientState,
+        buffer: Vec<u8>,
     }
 
     impl Client {
         fn new(socket: TcpStream) -> Self {
+            let mut buffer = Vec::new();
+            buffer.resize(32 * 1024 * 1024, 0);
             Self {
                 socket,
                 state: ClientState::Idle,
+                buffer,
+            }
+        }
+
+        fn read_and_process(&mut self) -> Result<(), TransferError> {
+            match self.socket.read() {
+                Ok(msg) => match msg {
+                    Some(mut msg) => match self.process_message(&mut msg) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            return Err(err);
+                        }
+                    },
+                    _ => {}
+                },
+                Err(err) => match err {
+                    Error::NotReady => match self.socket.get_ready() {
+                        Ok(_) => {}
+                        Err(_) => {
+                            return Err(TransferError::from(err));
+                        }
+                    },
+                    _ => {
+                        return Err(TransferError::from(err));
+                    }
+                },
+            }
+            Ok(())
+        }
+
+        fn process_message(&mut self, msg: &mut Message) -> Result<(), TransferError> {
+            let mut new_state = None;
+            match &mut self.state {
+                ClientState::Idle => {
+                    let command = msg.read_i32()?;
+                    match command {
+                        0 => {
+                            let upload = Upload::begin()?;
+
+                            let mut response = Message::new();
+                            response.write_buffer(&upload.id);
+                            self.socket.write(&response)?;
+                            println!("[{}] Begin upload.", hex::encode(upload.id));
+                            new_state = Some(ClientState::Upload(upload));
+                        }
+                        1 => {
+                            let id = msg.read_buffer()?;
+                            println!("[{}] Begin download.", hex::encode(&id));
+                            let download = Download::begin(id)?;
+                            new_state = Some(ClientState::Download(download));
+                        }
+                        _ => {}
+                    }
+                }
+                ClientState::Upload(upload) => {
+                    let cont = msg.read_u8()?;
+                    if cont == 0 {
+                        println!("[{}] Completed", hex::encode(upload.id));
+                        let mut confirm_msg = Message::new();
+                        confirm_msg.write_u8(1);
+                        self.socket.write(&confirm_msg)?;
+                        new_state = Some(ClientState::Idle);
+                    } else {
+                        let buffer = msg.read_buffer()?;
+                        upload.write(&buffer)?;
+                        let position = upload.position()?;
+                        println!(
+                            "[{}] Uploaded {}",
+                            hex::encode(upload.id),
+                            position.format_size()
+                        );
+                    }
+                }
+                _ => {}
+            }
+
+            match new_state {
+                None => {}
+                Some(new) => {
+                    self.state = new;
+                }
+            }
+            Ok(())
+        }
+
+        fn flush_and_process(&mut self) -> Result<(), TransferError> {
+            let flushed = self.socket.flush()?;
+
+            if flushed {
+                let mut new_state = None;
+
+                match &mut self.state {
+                    ClientState::Download(download) => {
+                        let mut message = Message::new();
+
+                        let bytes_read = download.read(&mut self.buffer)?;
+                        if bytes_read != 0 {
+                            message.write_u8(1);
+                            message.write_buffer(&self.buffer[..bytes_read]);
+                            println!(
+                                "[{}] Downloaded {}",
+                                hex::encode(&download.id),
+                                download.position()?.format_size()
+                            );
+                        } else {
+                            message.write_u8(0);
+                            new_state = Some(ClientState::Idle);
+                            println!("[{}] Completed", hex::encode(&download.id));
+                        }
+
+                        self.socket.write(&message)?;
+                    }
+                    _ => {}
+                }
+
+                match new_state {
+                    None => {}
+                    Some(new) => {
+                        self.state = new;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    impl AsRawFd for Client {
+        fn as_raw_fd(&self) -> i32 {
+            self.socket.as_raw_fd()
+        }
+    }
+
+    #[cfg(windows)]
+    impl AsRawSocket for Client {
+        fn as_raw_socket(&self) -> i32 {
+            self.socket.as_raw_socket()
+        }
+    }
+
+    impl Drop for Client {
+        fn drop(&mut self) {
+            match &self.state {
+                ClientState::Upload(upload) => {
+                    println!("[{}] Interrupted!", hex::encode(upload.id));
+                    let mut path = PathBuf::from("uploads");
+                    path.push(hex::encode(upload.id));
+                    match remove_file(path) {
+                        Err(io_err) => {
+                            println!(
+                                "[{}] Failed to remove file: {:?}",
+                                hex::encode(upload.id),
+                                io_err
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -152,6 +322,7 @@ pub mod thread_pool {
     enum ClientState {
         Idle,
         Upload(Upload),
+        Download(Download),
     }
 
     struct Upload {
@@ -170,6 +341,37 @@ pub mod thread_pool {
 
             Ok(Self { file, id })
         }
+
+        fn write(&mut self, buffer: &[u8]) -> Result<(), TransferError> {
+            self.file.write_all(buffer)?;
+            Ok(())
+        }
+
+        fn position(&mut self) -> Result<u64, TransferError> {
+            Ok(self.file.seek(SeekFrom::Current(0))?)
+        }
+    }
+
+    struct Download {
+        file: File,
+        id: Vec<u8>,
+    }
+
+    impl Download {
+        fn begin(id: Vec<u8>) -> Result<Self, TransferError> {
+            let mut path = PathBuf::from("uploads");
+            path.push(hex::encode(&id));
+            let file = File::open(path)?;
+            Ok(Self { file, id })
+        }
+
+        fn read(&mut self, buffer: &mut [u8]) -> Result<usize, TransferError> {
+            Ok(self.file.read(buffer)?)
+        }
+
+        fn position(&mut self) -> Result<u64, TransferError> {
+            Ok(self.file.seek(SeekFrom::Current(0))?)
+        }
     }
 
     fn thread_loop(
@@ -178,122 +380,48 @@ pub mod thread_pool {
         sockets_alive: Arc<AtomicUsize>,
     ) {
         let mut clients = Vec::new();
+        let mut fds = Vec::new();
         loop {
             match receiver.try_recv() {
                 Ok(message) => match message {
                     ThreadMessage::Terminate => {
                         break;
                     }
-                    ThreadMessage::Accept(socket) => {
-                        clients.push(Client::new(socket));
-                        sockets_alive.store(clients.len(), Release);
+                    ThreadMessage::Accept(mut socket) => {
+                        if socket.get_ready().is_ok() {
+                            clients.push(Client::new(socket));
+                            fds = simpletcp::utils::get_fd_array(&clients);
+                            sockets_alive.store(clients.len(), Release);
+                        }
                     }
                 },
                 Err(_) => {}
             }
 
-            let mut i = 0;
-            while i < clients.len() {
-                let mut remove = false;
-                let client = &mut clients[i];
-                match client.socket.read() {
-                    Ok(msg) => match msg {
-                        Some(mut msg) => match process_message(client, &mut msg) {
-                            Ok(_) => {}
-                            Err(_) => {
-                                remove = true;
-                            }
-                        },
-                        _ => {}
-                    },
-                    Err(err) => match err {
-                        Error::NotReady => match client.socket.get_ready() {
-                            Ok(_) => {}
-                            Err(_) => {
-                                remove = true;
-                            }
-                        },
-                        _ => {
-                            remove = true;
-                        }
-                    },
-                }
-                if client.socket.flush().is_err() {
-                    remove = true;
-                }
+            let index = simpletcp::utils::poll_set_timeout(&mut fds, EV_POLLIN | EV_POLLOUT, 50);
 
-                if remove {
-                    match &client.state {
-                        ClientState::Idle => {}
-                        ClientState::Upload(upload) => {
-                            println!("[{}] Interrupted!", hex::encode(upload.id));
-                            let mut path = PathBuf::from("uploads");
-                            path.push(hex::encode(upload.id));
-                            match remove_file(path) {
-                                Err(io_err) => {
-                                    println!(
-                                        "[{}] Failed to remove file: {:?}",
-                                        hex::encode(upload.id),
-                                        io_err
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
+            match index {
+                None => {}
+                Some(index) => {
+                    let mut remove = false;
+                    let client = &mut clients[index as usize];
+                    if client.read_and_process().is_err() {
+                        remove = true;
                     }
-                    clients.remove(i);
-                    sockets_alive.store(clients.len(), Release);
-                } else {
-                    i += 1;
+
+                    if client.flush_and_process().is_err() {
+                        remove = true;
+                    }
+
+                    if remove {
+                        clients.remove(index as usize);
+                        sockets_alive.store(clients.len(), Release);
+                        fds = simpletcp::utils::get_fd_array(&clients);
+                    }
                 }
             }
         }
 
         println!("[Thread #{}] Terminating.", thread_id);
-    }
-
-    fn process_message(client: &mut Client, msg: &mut Message) -> Result<(), TransferError> {
-        let state = &mut client.state;
-        let mut new_state = None;
-        match state {
-            ClientState::Idle => {
-                let command = msg.read_i32()?;
-                match command {
-                    0 => {
-                        let upload = Upload::begin()?;
-
-                        let mut response = Message::new();
-                        response.write_buffer(&upload.id);
-                        client.socket.write(&response)?;
-                        println!("[{}] Begun transfer.", hex::encode(upload.id));
-                        new_state = Some(ClientState::Upload(upload));
-                    }
-                    _ => {}
-                }
-            }
-            ClientState::Upload(upload) => {
-                let cont = msg.read_u8()?;
-                if cont == 0 {
-                    println!("[{}] Completed", hex::encode(upload.id));
-                    let mut confirm_msg = Message::new();
-                    confirm_msg.write_u8(1);
-                    client.socket.write(&confirm_msg)?;
-                    new_state = Some(ClientState::Idle);
-                } else {
-                    let buffer = msg.read_buffer()?;
-                    upload.file.write_all(&buffer)?;
-                    let position = upload.file.seek(SeekFrom::Current(0))?;
-                    println!("[{}] {}", hex::encode(upload.id), position.format_size());
-                }
-            }
-        }
-
-        match new_state {
-            None => {}
-            Some(new) => {
-                client.state = new;
-            }
-        }
-        Ok(())
     }
 }
