@@ -7,11 +7,12 @@ use crate::transfer::transfer::{Download, Upload};
 use std::convert::TryInto;
 use std::env::args;
 use std::fs::File;
-use std::io::{Read, Write, Seek, SeekFrom};
+use std::io::{Read, Write, Seek, SeekFrom, stdin, stdout};
 use std::net::ToSocketAddrs;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::process::exit;
 use std::time::Instant;
+use std::fs;
 
 const BUFFER_SIZE: usize = 1024 * 1024;
 
@@ -117,6 +118,8 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool) {
     let mut file = file.unwrap();
 
     let mut upload = Upload::new(addr, encrypt).unwrap();
+
+    upload.write_filename(filepath.file_name().unwrap().to_str().unwrap()).unwrap();
     let mut buf = Vec::new();
     buf.resize(BUFFER_SIZE, 0);
 
@@ -168,7 +171,7 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool) {
         key = Some(download_key[32..].try_into().unwrap());
     }
     let mut download = Download::new(addr, &download_key[..32].try_into().unwrap(), key).unwrap();
-    let mut file = File::create("output").unwrap();
+    let mut file = File::create(".sfshr-temp").unwrap();
     let time = Instant::now();
     loop {
         let (buf, cont) = download.read().unwrap();
@@ -183,6 +186,29 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool) {
 
         println!("Downloaded {:^12} @ {:^12}\x1b[1A\x1b[0G", size.format_size(), format!("{}/s", speed.format_size()));
     }
-
     println!();
+
+    let filename = download.filename();
+    if Path::new(&filename).exists() {
+        loop {
+            print!("\x1b[1A\x1b[0G\x1b[KFile {} already exists. Replace? [yes/no]", filename);
+            stdout().flush().unwrap();
+            let stdin = stdin();
+            let mut line = String::new();
+            stdin.read_line(&mut line).unwrap();
+            line.retain(|c| {
+                c != '\n' && c != '\r'
+            });
+            if line == "yes" {
+                break;
+            }
+            if line == "no" {
+                fs::remove_file(".sfshr-temp").unwrap();
+                println!("\x1b[1A\x1b[0G\x1b[KAborted");
+                exit(1);
+            }
+        }
+    }
+    fs::rename(".sfshr-temp", &filename).unwrap();
+    println!("\x1b[1A\x1b[0G\x1b[KSuccesfully downloaded {}", &filename);
 }

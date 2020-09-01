@@ -21,7 +21,7 @@ pub mod thread_pool {
     #[cfg(unix)]
     use std::os::unix::io::AsRawFd;
 
-    use simpletcp::utils::{poll_timeout, EV_POLLIN, EV_POLLOUT};
+    use simpletcp::utils::{EV_POLLIN, EV_POLLOUT};
     #[cfg(windows)]
     use std::os::unix::io::AsRawSocket;
 

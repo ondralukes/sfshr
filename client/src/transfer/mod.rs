@@ -5,6 +5,7 @@ pub mod transfer {
     use rand::{RngCore, SeedableRng};
     use simpletcp::simpletcp::{Message, MessageError, TcpStream};
     use std::net::ToSocketAddrs;
+    use std::convert::TryInto;
 
     #[derive(Debug)]
     pub enum TransferError {
@@ -92,6 +93,16 @@ pub mod transfer {
             })
         }
 
+        pub fn write_filename(&mut self, name: &str) -> Result<(), TransferError>{
+            let mut buf = Vec::new();
+            let len = name.len() as u32;
+            let len_bytes = len.to_le_bytes();
+            buf.extend_from_slice(&len_bytes);
+            buf.extend_from_slice(name.as_bytes());
+            self.send(&buf)?;
+            Ok(())
+        }
+
         pub fn send(&mut self, buffer: &[u8]) -> Result<(), TransferError> {
             if buffer.len() > self.encrypt_buffer.len() - 256 {
                 self.encrypt_buffer.resize(buffer.len() + 256, 0);
@@ -158,6 +169,7 @@ pub mod transfer {
         key: Option<[u8; 32]>,
         decrypt_buffer: Vec<u8>,
         finalized: bool,
+        filename: Vec<u8>
     }
 
     impl Download {
@@ -178,6 +190,7 @@ pub mod transfer {
                 key,
                 decrypt_buffer: Vec::new(),
                 finalized: false,
+                filename: Vec::new()
             })
         }
 
@@ -185,45 +198,60 @@ pub mod transfer {
             if self.finalized {
                 return Ok((Vec::new(), false));
             }
+
+            let mut buffer;
             let mut message = self.conn.read_blocking()?;
             let cont = message.read_u8()?;
             if cont == 0 {
-                return match &mut self.crypter {
-                    None => Ok((Vec::new(), false)),
+                match &mut self.crypter {
+                    None => { return Ok((Vec::new(), false));},
                     Some(crypter) => {
                         let bytes_decrypted = crypter.finalize(&mut self.decrypt_buffer)?;
                         self.finalized = true;
-                        Ok((self.decrypt_buffer[..bytes_decrypted].to_vec(), true))
+                        buffer = self.decrypt_buffer[..bytes_decrypted].to_vec();
+                    }
+                };
+            } else {
+                buffer = message.read_buffer()?;
+                if self.key.is_some() && self.crypter.is_none() {
+                    if buffer.len() < 16 {
+                        panic!("IV split");
+                    }
+
+                    self.crypter = Some(Crypter::new(
+                        Cipher::aes_256_cbc(),
+                        Mode::Decrypt,
+                        &self.key.unwrap(),
+                        Some(&buffer[..16]),
+                    )?);
+
+                    buffer.drain(..16);
+                }
+
+                match &mut self.crypter {
+                    None => {},
+                    Some(crypter) => {
+                        if self.decrypt_buffer.len() < buffer.len() + 256 {
+                            self.decrypt_buffer.resize(buffer.len() + 256, 0);
+                        }
+                        let bytes_decrypted = crypter.update(&buffer, &mut self.decrypt_buffer)?;
+
+                        buffer = self.decrypt_buffer[..bytes_decrypted].to_vec();
                     }
                 };
             }
 
-            let mut buffer = message.read_buffer()?;
-            if self.key.is_some() && self.crypter.is_none() {
-                if buffer.len() < 16 {
-                    panic!("IV split");
-                }
-
-                self.crypter = Some(Crypter::new(
-                    Cipher::aes_256_cbc(),
-                    Mode::Decrypt,
-                    &self.key.unwrap(),
-                    Some(&buffer[..16]),
-                )?);
-
-                buffer.drain(..16);
+            if self.filename.is_empty() && !buffer.is_empty() {
+                let len = u32::from_le_bytes(buffer[..4].try_into().unwrap()) as usize;
+                self.filename.extend_from_slice(&buffer[4..4+len]);
+                buffer = buffer[4+len..].to_vec();
             }
-            return match &mut self.crypter {
-                None => Ok((buffer, true)),
-                Some(crypter) => {
-                    if self.decrypt_buffer.len() < buffer.len() + 256 {
-                        self.decrypt_buffer.resize(buffer.len() + 256, 0);
-                    }
-                    let bytes_decrypted = crypter.update(&buffer, &mut self.decrypt_buffer)?;
 
-                    Ok((self.decrypt_buffer[..bytes_decrypted].to_vec(), true))
-                }
-            };
+            Ok((buffer,true))
+        }
+
+        pub fn filename(self) -> String{
+            String::from_utf8(self.filename).unwrap()
         }
     }
 }
