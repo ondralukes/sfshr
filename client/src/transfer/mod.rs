@@ -6,6 +6,7 @@ pub mod transfer {
     use simpletcp::simpletcp::{Message, MessageError, TcpStream};
     use std::net::ToSocketAddrs;
     use std::convert::TryInto;
+    use std::string::FromUtf8Error;
 
     #[derive(Debug)]
     pub enum TransferError {
@@ -29,6 +30,12 @@ pub mod transfer {
 
     impl From<MessageError> for TransferError {
         fn from(_: MessageError) -> Self {
+            TransferError::CorruptedMessage
+        }
+    }
+
+    impl From<FromUtf8Error> for TransferError{
+        fn from(_: FromUtf8Error) -> Self {
             TransferError::CorruptedMessage
         }
     }
@@ -145,7 +152,14 @@ pub mod transfer {
             match confirmation {
                 None => return Err(TransferError::ServerError),
                 Some(mut msg) => {
-                    if msg.read_u8().unwrap() != 1 {
+                    if msg.read_i8().unwrap() != 1 {
+                        match msg.read_buffer(){
+                            Ok(description) => {
+                                println!("Received an error message:");
+                                println!("\n{}\n", String::from_utf8(description)?);
+                            },
+                            _=> {},
+                        }
                         return Err(TransferError::ServerError);
                     }
                 }
@@ -201,8 +215,17 @@ pub mod transfer {
 
             let mut buffer;
             let mut message = self.conn.read_blocking()?;
-            let cont = message.read_u8()?;
-            if cont == 0 {
+            let cont = message.read_i8()?;
+            if cont == -1 {
+                match message.read_buffer(){
+                    Ok(description) => {
+                        println!("Received an error message:");
+                        println!("\n{}\n", String::from_utf8(description)?);
+                    },
+                    _=> {},
+                }
+                return Err(TransferError::ServerError);
+            } else if cont == 0 {
                 match &mut self.crypter {
                     None => { return Ok((Vec::new(), false));},
                     Some(crypter) => {

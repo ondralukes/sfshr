@@ -8,7 +8,7 @@ pub mod thread_pool {
     use crate::thread_pool::thread_pool::ThreadMessage::Accept;
     use simpletcp::simpletcp::{Error, Message, MessageError, TcpStream};
     use std::fs::{remove_file, File};
-    use std::io;
+    use std::{io, fmt};
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::PathBuf;
     use std::string::FromUtf8Error;
@@ -26,6 +26,7 @@ pub mod thread_pool {
     use std::os::unix::io::AsRawSocket;
     use std::time::{SystemTime, UNIX_EPOCH};
     use crate::config::config::Config;
+    use std::fmt::{Display, Formatter};
 
     pub struct ThreadPool<'a> {
         threads: Vec<Thread>,
@@ -121,6 +122,22 @@ pub mod thread_pool {
         InvalidMessage,
         IOError,
         NetworkError,
+    }
+
+    impl Display for TransferError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            match self {
+                TransferError::InvalidMessage => {
+                    f.write_str("TransferError::InvalidMessage: Received an invalid message")
+                },
+                TransferError::IOError => {
+                    f.write_str("TransferError::IOError: An error occurred during a file operation. Maybe your file expired?")
+                },
+                TransferError::NetworkError => {
+                    f.write_str("TransferError::NetworkError")
+                },
+            }
+        }
     }
 
     impl From<FromUtf8Error> for TransferError {
@@ -222,7 +239,7 @@ pub mod thread_pool {
                     if cont == 0 {
                         println!("[{}] Completed", hex::encode(upload.id));
                         let mut confirm_msg = Message::new();
-                        confirm_msg.write_u8(1);
+                        confirm_msg.write_i8(1);
                         self.socket.write(&confirm_msg)?;
                         new_state = Some(ClientState::Idle);
                     } else {
@@ -260,7 +277,7 @@ pub mod thread_pool {
 
                         let bytes_read = download.read(&mut self.buffer)?;
                         if bytes_read != 0 {
-                            message.write_u8(1);
+                            message.write_i8(1);
                             message.write_buffer(&self.buffer[..bytes_read]);
                             println!(
                                 "[{}] Downloaded {}",
@@ -268,7 +285,7 @@ pub mod thread_pool {
                                 download.position()?.format_size()
                             );
                         } else {
-                            message.write_u8(0);
+                            message.write_i8(0);
                             new_state = Some(ClientState::Idle);
                             println!("[{}] Completed", hex::encode(&download.id));
                         }
@@ -287,6 +304,15 @@ pub mod thread_pool {
             }
 
             Ok(())
+        }
+
+        #[allow(unused_must_use)]
+        fn send_error(&mut self, description: String) -> (){
+            let mut message = Message::new();
+            message.write_i8(-1);
+            message.write_buffer(description.as_bytes());
+
+            self.socket.write(&message);
         }
     }
 
@@ -424,12 +450,21 @@ pub mod thread_pool {
                 Some(index) => {
                     let mut remove = false;
                     let client = &mut clients[index as usize];
-                    if client.read_and_process().is_err() {
-                        remove = true;
+
+                    match client.read_and_process() {
+                        Err(error) => {
+                            client.send_error(format!("{}", error));
+                            remove = true;
+                        },
+                        _ => {}
                     }
 
-                    if client.flush_and_process().is_err() {
-                        remove = true;
+                    match client.flush_and_process() {
+                        Err(error) => {
+                            client.send_error(format!("{}", error));
+                            remove = true;
+                        },
+                        _ => {}
                     }
 
                     if remove {

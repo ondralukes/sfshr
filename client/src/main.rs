@@ -3,7 +3,7 @@ mod transfer;
 extern crate base64;
 extern crate openssl;
 
-use crate::transfer::transfer::{Download, Upload};
+use crate::transfer::transfer::{Download, Upload, TransferError};
 use std::convert::TryInto;
 use std::env::args;
 use std::fs::File;
@@ -117,9 +117,9 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool) {
 
     let mut file = file.unwrap();
 
-    let mut upload = Upload::new(addr, encrypt).unwrap();
+    let mut upload = Upload::new(addr, encrypt).unwrap_or_else(on_error);
 
-    upload.write_filename(filepath.file_name().unwrap().to_str().unwrap()).unwrap();
+    upload.write_filename(filepath.file_name().unwrap().to_str().unwrap()).unwrap_or_else(on_error);
     let mut buf = Vec::new();
     buf.resize(BUFFER_SIZE, 0);
 
@@ -130,7 +130,7 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool) {
             break;
         }
 
-        upload.send(&buf[..bytes_read]).unwrap();
+        upload.send(&buf[..bytes_read]).unwrap_or_else(on_error);
         let time = time.elapsed().as_micros() as f64;
         let size = file.seek(SeekFrom::Current(0)).unwrap();
         let speed = size as f64/time*1000000.0;
@@ -138,7 +138,7 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool) {
         println!("Uploaded {:^12} @ {:^12}  \x1b[1A\x1b[0G", size.format_size(), format!("{}/s", speed.format_size()));
     }
 
-    upload.finalize().unwrap();
+    upload.finalize().unwrap_or_else(on_error);
     let time = time.elapsed().as_micros() as f64;
     let size = file.seek(SeekFrom::Current(0)).unwrap();
     let speed = size as f64/time*1000000.0;
@@ -170,11 +170,11 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool) {
     if encrypt {
         key = Some(download_key[32..].try_into().unwrap());
     }
-    let mut download = Download::new(addr, &download_key[..32].try_into().unwrap(), key).unwrap();
+    let mut download = Download::new(addr, &download_key[..32].try_into().unwrap(), key).unwrap_or_else(on_error);
     let mut file = File::create(".sfshr-temp").unwrap();
     let time = Instant::now();
     loop {
-        let (buf, cont) = download.read().unwrap();
+        let (buf, cont) = download.read().unwrap_or_else(on_error);
         if !cont {
             break;
         }
@@ -211,4 +211,9 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool) {
     }
     fs::rename(".sfshr-temp", &filename).unwrap();
     println!("\x1b[1A\x1b[0G\x1b[KSuccesfully downloaded {}", &filename);
+}
+
+fn on_error<T>(_: TransferError) -> T {
+    println!("\x1b[31mTerminating due to an error\x1b[0m");
+    exit(1);
 }
