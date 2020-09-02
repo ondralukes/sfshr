@@ -24,6 +24,9 @@ pub mod thread_pool {
     use simpletcp::utils::{EV_POLLIN, EV_POLLOUT};
     #[cfg(windows)]
     use std::os::unix::io::AsRawSocket;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const EXPIRATION_TIME: u64 = 28800;
 
     pub struct ThreadPool {
         threads: Vec<Thread>,
@@ -202,8 +205,9 @@ pub mod thread_pool {
                         }
                         1 => {
                             let id = msg.read_buffer()?;
-                            println!("[{}] Begin download.", hex::encode(&id));
+                            let hex_id = hex::encode(&id);
                             let download = Download::begin(id)?;
+                            println!("[{}] Begin download.", hex_id);
                             new_state = Some(ClientState::Download(download));
                         }
                         _ => {}
@@ -339,7 +343,16 @@ pub mod thread_pool {
             path.push(hex::encode(id));
             let file = File::create(path)?;
 
-            Ok(Self { file, id })
+            let mut upload = Self { file, id };
+            upload.write_expiration()?;
+
+            Ok(upload)
+        }
+
+        fn write_expiration(&mut self) -> Result<(), TransferError>{
+            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + EXPIRATION_TIME;
+            self.file.write_all(&timestamp.to_le_bytes())?;
+            Ok(())
         }
 
         fn write(&mut self, buffer: &[u8]) -> Result<(), TransferError> {
@@ -361,7 +374,8 @@ pub mod thread_pool {
         fn begin(id: Vec<u8>) -> Result<Self, TransferError> {
             let mut path = PathBuf::from("uploads");
             path.push(hex::encode(&id));
-            let file = File::open(path)?;
+            let mut file = File::open(path)?;
+            file.seek(SeekFrom::Start(8))?;
             Ok(Self { file, id })
         }
 
