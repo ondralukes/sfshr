@@ -1,4 +1,5 @@
 mod thread_pool;
+mod config;
 
 extern crate simpletcp;
 
@@ -10,14 +11,36 @@ use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::fs::File;
 use std::io::Read;
+use crate::config::config::Config;
+use std::env::args;
+use std::process::exit;
 
 fn main() {
-    fs::create_dir_all("uploads/").unwrap();
+    let mut args = args().into_iter();
+    let mut config_file = String::from("config");
+    loop {
+        let arg = args.next();
+        if arg.is_none() {
+            break;
+        }
+        let arg = arg.unwrap();
+
+        if arg == "--config" || arg == "-c" {
+            let value = args.next();
+            if value.is_none() {
+                println!("Expected value for option {}!", arg);
+                exit(1);
+            }
+            config_file = value.unwrap();
+        }
+    }
+    let cfg = Config::new(config_file);
+    fs::create_dir_all(cfg.uploads()).unwrap();
 
     spawn(|| {
         file_checker();
     });
-    let mut pool = ThreadPool::new(8);
+    let mut pool = ThreadPool::new(&cfg);
     let server = TcpServer::new("0.0.0.0:40788").unwrap();
 
     loop {

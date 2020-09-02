@@ -1,0 +1,18 @@
+# Sample sfshr config file
+
+# Expiration time in seconds
+# Defaults to 10800
+
+EXPIRATION_TIME=300
+
+
+# Number of networking threads
+# Defaults to 8
+
+THREAD_COUNT=8
+
+
+# Folder for uploaded files
+# Defaults to "uploads"
+
+UPLOADS=uploads

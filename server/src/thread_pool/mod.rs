@@ -25,24 +25,26 @@ pub mod thread_pool {
     #[cfg(windows)]
     use std::os::unix::io::AsRawSocket;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::config::config::Config;
 
-    const EXPIRATION_TIME: u64 = 28800;
-
-    pub struct ThreadPool {
+    pub struct ThreadPool<'a> {
         threads: Vec<Thread>,
+        _config: &'a Config
     }
 
-    impl ThreadPool {
-        pub fn new(size: usize) -> ThreadPool {
+    impl<'a> ThreadPool<'a> {
+        pub fn new(config: &'a Config) -> ThreadPool {
             let mut res = ThreadPool {
                 threads: Vec::new(),
+                _config: config
             };
-            for i in 0..size {
+            for i in 0..config.thread_count() {
                 let (tx, rx): (Sender<ThreadMessage>, Receiver<ThreadMessage>) = channel();
                 let sockets_alive = Arc::new(AtomicUsize::new(0));
                 let sockets_alive_clone = sockets_alive.clone();
+                let config_clone = config.clone();
                 let join_handle = spawn(move || {
-                    thread_loop(i, rx, sockets_alive_clone);
+                    thread_loop(i, config_clone, rx, sockets_alive_clone);
                 });
                 res.threads.push(Thread {
                     join_handle,
@@ -70,7 +72,7 @@ pub mod thread_pool {
         }
     }
 
-    impl Drop for ThreadPool {
+    impl Drop for ThreadPool<'_> {
         fn drop(&mut self) {
             println!("Terminating threads...");
             while !self.threads.is_empty() {
@@ -145,20 +147,22 @@ pub mod thread_pool {
         }
     }
 
-    struct Client {
+    struct Client<'a> {
         socket: TcpStream,
         state: ClientState,
         buffer: Vec<u8>,
+        config: &'a Config
     }
 
-    impl Client {
-        fn new(socket: TcpStream) -> Self {
+    impl<'a> Client<'a> {
+        fn new(socket: TcpStream, config: &'a Config) -> Self {
             let mut buffer = Vec::new();
             buffer.resize(32 * 1024 * 1024, 0);
             Self {
                 socket,
                 state: ClientState::Idle,
                 buffer,
+                config
             }
         }
 
@@ -195,7 +199,7 @@ pub mod thread_pool {
                     let command = msg.read_i32()?;
                     match command {
                         0 => {
-                            let upload = Upload::begin()?;
+                            let upload = Upload::begin(self.config)?;
 
                             let mut response = Message::new();
                             response.write_buffer(&upload.id);
@@ -287,20 +291,20 @@ pub mod thread_pool {
     }
 
     #[cfg(unix)]
-    impl AsRawFd for Client {
+    impl AsRawFd for Client<'_> {
         fn as_raw_fd(&self) -> i32 {
             self.socket.as_raw_fd()
         }
     }
 
     #[cfg(windows)]
-    impl AsRawSocket for Client {
+    impl AsRawSocket for Client<'_> {
         fn as_raw_socket(&self) -> i32 {
             self.socket.as_raw_socket()
         }
     }
 
-    impl Drop for Client {
+    impl Drop for Client<'_> {
         fn drop(&mut self) {
             match &self.state {
                 ClientState::Upload(upload) => {
@@ -335,22 +339,22 @@ pub mod thread_pool {
     }
 
     impl Upload {
-        fn begin() -> Result<Self, TransferError> {
+        fn begin(config: &Config) -> Result<Self, TransferError> {
             let mut id = [0; 32];
             StdRng::from_entropy().fill_bytes(&mut id);
 
-            let mut path = PathBuf::from("uploads");
+            let mut path = PathBuf::from(config.uploads());
             path.push(hex::encode(id));
             let file = File::create(path)?;
 
             let mut upload = Self { file, id };
-            upload.write_expiration()?;
+            upload.write_expiration(config)?;
 
             Ok(upload)
         }
 
-        fn write_expiration(&mut self) -> Result<(), TransferError>{
-            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + EXPIRATION_TIME;
+        fn write_expiration(&mut self, config: &Config) -> Result<(), TransferError>{
+            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + config.expiration();
             self.file.write_all(&timestamp.to_le_bytes())?;
             Ok(())
         }
@@ -389,7 +393,8 @@ pub mod thread_pool {
     }
 
     fn thread_loop(
-        thread_id: usize,
+        thread_id: u64,
+        config: Config,
         receiver: Receiver<ThreadMessage>,
         sockets_alive: Arc<AtomicUsize>,
     ) {
@@ -403,7 +408,7 @@ pub mod thread_pool {
                     }
                     ThreadMessage::Accept(mut socket) => {
                         if socket.get_ready().is_ok() {
-                            clients.push(Client::new(socket));
+                            clients.push(Client::new(socket, &config));
                             fds = simpletcp::utils::get_fd_array(&clients);
                             sockets_alive.store(clients.len(), Release);
                         }
