@@ -22,8 +22,8 @@ fn encrypted_transfer() {
     unsafe {
         SERVER = Some(
             Command::new("cargo")
-                .stderr(Stdio::null())
-                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .stdout(Stdio::inherit())
                 .args(&["run", "--", "--config", "../tests/tests/normal-config"])
                 .current_dir("../server")
                 .spawn()
@@ -33,7 +33,7 @@ fn encrypted_transfer() {
     sleep(Duration::from_secs(2));
     generate_test_file();
     let sender = Command::new("cargo")
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .stdout(Stdio::piped())
         .args(&["run", "--", "--quiet", "test-file"])
         .current_dir("../client")
@@ -56,7 +56,7 @@ fn encrypted_transfer() {
     println!("{:?}", link_args);
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .args(&["run", "--", "--quiet"])
         .args(&link_args[1..])
         .current_dir("../client")
@@ -82,8 +82,8 @@ fn unencrypted_transfer() {
     unsafe {
         SERVER = Some(
             Command::new("cargo")
-                .stderr(Stdio::null())
-                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .stdout(Stdio::inherit())
                 .args(&["run", "--", "--config", "../tests/tests/normal-config"])
                 .current_dir("../server")
                 .spawn()
@@ -93,7 +93,7 @@ fn unencrypted_transfer() {
     sleep(Duration::from_secs(2));
     generate_test_file();
     let sender = Command::new("cargo")
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .stdout(Stdio::piped())
         .args(&["run", "--", "--quiet", "--no-encryption", "test-file"])
         .current_dir("../client")
@@ -116,7 +116,7 @@ fn unencrypted_transfer() {
     println!("{:?}", link_args);
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .args(&["run", "--", "--quiet"])
         .args(&link_args[1..])
         .current_dir("../client")
