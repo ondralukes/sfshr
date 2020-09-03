@@ -8,8 +8,6 @@ use std::ops::Deref;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::thread::sleep;
-use std::time::Duration;
 
 static mut SERVER: Option<Child> = None;
 lazy_static! {
@@ -23,14 +21,15 @@ fn encrypted_transfer() {
         SERVER = Some(
             Command::new("cargo")
                 .stderr(Stdio::inherit())
-                .stdout(Stdio::inherit())
+                .stdout(Stdio::piped())
                 .args(&["run", "--", "--config", "../tests/tests/normal-config"])
                 .current_dir("../server")
                 .spawn()
                 .unwrap_or_else(unwrap_clean_up),
         );
     }
-    sleep(Duration::from_secs(2));
+
+    wait_for_server();
     generate_test_file();
     let sender = Command::new("cargo")
         .stderr(Stdio::inherit())
@@ -83,14 +82,14 @@ fn unencrypted_transfer() {
         SERVER = Some(
             Command::new("cargo")
                 .stderr(Stdio::inherit())
-                .stdout(Stdio::inherit())
+                .stdout(Stdio::piped())
                 .args(&["run", "--", "--config", "../tests/tests/normal-config"])
                 .current_dir("../server")
                 .spawn()
                 .unwrap_or_else(unwrap_clean_up),
         );
     }
-    sleep(Duration::from_secs(2));
+    wait_for_server();
     generate_test_file();
     let sender = Command::new("cargo")
         .stderr(Stdio::inherit())
@@ -178,5 +177,19 @@ fn clean_up() {
         if SERVER.is_some() {
             SERVER.as_mut().unwrap().kill().unwrap();
         }
+    }
+}
+
+fn wait_for_server() {
+    let mut buffer = [0; 6];
+    unsafe {
+        SERVER
+            .as_mut()
+            .unwrap()
+            .stdout
+            .as_mut()
+            .unwrap()
+            .read_exact(&mut buffer)
+            .unwrap();
     }
 }
