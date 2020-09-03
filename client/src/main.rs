@@ -261,7 +261,7 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool, qui
     );
 }
 
-fn on_error<T>(_: TransferError) -> T {
-    println!("\x1b[31mTerminating due to an error\x1b[0m");
+fn on_error<T>(err: TransferError) -> T {
+    println!("\x1b[31mTerminating due to an error ({:?})\x1b[0m", err);
     exit(1);
 }
