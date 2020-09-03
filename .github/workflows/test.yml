@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Client format
+      run: |
+        cd client
+        cargo fmt -- --check
+    - name: Server format
+      run: |
+        cd server
+        cargo fmt -- --check
+    - name: Tests format
+      run: |
+        cd tests
+        cargo fmt -- --check
+    - name: Run tests
+      run: |
+        cd tests
+        cargo test
