@@ -1,19 +1,19 @@
-mod thread_pool;
 mod config;
+mod thread_pool;
 
 extern crate simpletcp;
 
 use std::fs;
 
+use crate::config::config::Config;
 use crate::thread_pool::thread_pool::ThreadPool;
 use simpletcp::simpletcp::TcpServer;
-use std::thread::{sleep, spawn};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::env::args;
 use std::fs::File;
 use std::io::Read;
-use crate::config::config::Config;
-use std::env::args;
 use std::process::exit;
+use std::thread::{sleep, spawn};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn main() {
     let mut args = args().into_iter();
@@ -37,12 +37,13 @@ fn main() {
     let cfg = Config::new(config_file);
     fs::create_dir_all(cfg.uploads()).unwrap();
 
-    spawn(|| {
-        file_checker();
+    let cfg_clone = cfg.clone();
+    spawn(move || {
+        file_checker(cfg_clone);
     });
     let mut pool = ThreadPool::new(&cfg);
     let server = TcpServer::new("0.0.0.0:40788").unwrap();
-
+    println!("ready");
     loop {
         match server.accept_blocking() {
             Ok(socket) => {
@@ -53,10 +54,13 @@ fn main() {
     }
 }
 
-fn file_checker() {
+fn file_checker(config: Config) {
     loop {
-        let dir = fs::read_dir("uploads/").unwrap();
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let dir = fs::read_dir(config.uploads()).unwrap();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         for entry in dir {
             let entry = entry.unwrap();
             if entry.file_type().unwrap().is_file() {

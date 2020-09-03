@@ -4,21 +4,33 @@ pub mod transfer {
     use rand::prelude::StdRng;
     use rand::{RngCore, SeedableRng};
     use simpletcp::simpletcp::{Message, MessageError, TcpStream};
-    use std::net::ToSocketAddrs;
     use std::convert::TryInto;
+    use std::fmt;
+    use std::fmt::{Display, Formatter};
+    use std::net::ToSocketAddrs;
     use std::string::FromUtf8Error;
 
-    #[derive(Debug)]
     pub enum TransferError {
-        NetworkError,
+        NetworkError(simpletcp::simpletcp::Error),
         ServerError,
         EncryptionError,
         CorruptedMessage,
     }
 
+    impl Display for TransferError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            match &self {
+                TransferError::NetworkError(net_err) => f.write_str(&format!("{:?}", net_err)),
+                TransferError::ServerError => f.write_str("ServerError"),
+                TransferError::EncryptionError => f.write_str("EncryptionError"),
+                TransferError::CorruptedMessage => f.write_str("CorruptedMessage"),
+            }
+        }
+    }
+
     impl From<simpletcp::simpletcp::Error> for TransferError {
-        fn from(_: simpletcp::simpletcp::Error) -> Self {
-            TransferError::NetworkError
+        fn from(net_err: simpletcp::simpletcp::Error) -> Self {
+            TransferError::NetworkError(net_err)
         }
     }
 
@@ -34,7 +46,7 @@ pub mod transfer {
         }
     }
 
-    impl From<FromUtf8Error> for TransferError{
+    impl From<FromUtf8Error> for TransferError {
         fn from(_: FromUtf8Error) -> Self {
             TransferError::CorruptedMessage
         }
@@ -100,7 +112,7 @@ pub mod transfer {
             })
         }
 
-        pub fn write_filename(&mut self, name: &str) -> Result<(), TransferError>{
+        pub fn write_filename(&mut self, name: &str) -> Result<(), TransferError> {
             let mut buf = Vec::new();
             let len = name.len() as u32;
             let len_bytes = len.to_le_bytes();
@@ -153,12 +165,12 @@ pub mod transfer {
                 None => return Err(TransferError::ServerError),
                 Some(mut msg) => {
                     if msg.read_i8().unwrap() != 1 {
-                        match msg.read_buffer(){
+                        match msg.read_buffer() {
                             Ok(description) => {
                                 println!("Received an error message:");
                                 println!("\n{}\n", String::from_utf8(description)?);
-                            },
-                            _=> {},
+                            }
+                            _ => {}
                         }
                         return Err(TransferError::ServerError);
                     }
@@ -183,7 +195,7 @@ pub mod transfer {
         key: Option<[u8; 32]>,
         decrypt_buffer: Vec<u8>,
         finalized: bool,
-        filename: Vec<u8>
+        filename: Vec<u8>,
     }
 
     impl Download {
@@ -204,7 +216,7 @@ pub mod transfer {
                 key,
                 decrypt_buffer: Vec::new(),
                 finalized: false,
-                filename: Vec::new()
+                filename: Vec::new(),
             })
         }
 
@@ -217,17 +229,19 @@ pub mod transfer {
             let mut message = self.conn.read_blocking()?;
             let cont = message.read_i8()?;
             if cont == -1 {
-                match message.read_buffer(){
+                match message.read_buffer() {
                     Ok(description) => {
                         println!("Received an error message:");
                         println!("\n{}\n", String::from_utf8(description)?);
-                    },
-                    _=> {},
+                    }
+                    _ => {}
                 }
                 return Err(TransferError::ServerError);
             } else if cont == 0 {
                 match &mut self.crypter {
-                    None => { return Ok((Vec::new(), false));},
+                    None => {
+                        return Ok((Vec::new(), false));
+                    }
                     Some(crypter) => {
                         let bytes_decrypted = crypter.finalize(&mut self.decrypt_buffer)?;
                         self.finalized = true;
@@ -252,7 +266,7 @@ pub mod transfer {
                 }
 
                 match &mut self.crypter {
-                    None => {},
+                    None => {}
                     Some(crypter) => {
                         if self.decrypt_buffer.len() < buffer.len() + 256 {
                             self.decrypt_buffer.resize(buffer.len() + 256, 0);
@@ -266,14 +280,14 @@ pub mod transfer {
 
             if self.filename.is_empty() && !buffer.is_empty() {
                 let len = u32::from_le_bytes(buffer[..4].try_into().unwrap()) as usize;
-                self.filename.extend_from_slice(&buffer[4..4+len]);
-                buffer = buffer[4+len..].to_vec();
+                self.filename.extend_from_slice(&buffer[4..4 + len]);
+                buffer = buffer[4 + len..].to_vec();
             }
 
-            Ok((buffer,true))
+            Ok((buffer, true))
         }
 
-        pub fn filename(self) -> String{
+        pub fn filename(self) -> String {
             String::from_utf8(self.filename).unwrap()
         }
     }

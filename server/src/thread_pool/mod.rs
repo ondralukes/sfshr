@@ -8,7 +8,6 @@ pub mod thread_pool {
     use crate::thread_pool::thread_pool::ThreadMessage::Accept;
     use simpletcp::simpletcp::{Error, Message, MessageError, TcpStream};
     use std::fs::{remove_file, File};
-    use std::{io, fmt};
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::PathBuf;
     use std::string::FromUtf8Error;
@@ -17,27 +16,28 @@ pub mod thread_pool {
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::sync::Arc;
     use std::thread::{spawn, JoinHandle};
+    use std::{fmt, io};
 
     #[cfg(unix)]
     use std::os::unix::io::AsRawFd;
 
+    use crate::config::config::Config;
     use simpletcp::utils::{EV_POLLIN, EV_POLLOUT};
+    use std::fmt::{Display, Formatter};
     #[cfg(windows)]
     use std::os::unix::io::AsRawSocket;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use crate::config::config::Config;
-    use std::fmt::{Display, Formatter};
 
     pub struct ThreadPool<'a> {
         threads: Vec<Thread>,
-        _config: &'a Config
+        _config: &'a Config,
     }
 
     impl<'a> ThreadPool<'a> {
         pub fn new(config: &'a Config) -> ThreadPool {
             let mut res = ThreadPool {
                 threads: Vec::new(),
-                _config: config
+                _config: config,
             };
             for i in 0..config.thread_count() {
                 let (tx, rx): (Sender<ThreadMessage>, Receiver<ThreadMessage>) = channel();
@@ -168,7 +168,7 @@ pub mod thread_pool {
         socket: TcpStream,
         state: ClientState,
         buffer: Vec<u8>,
-        config: &'a Config
+        config: &'a Config,
     }
 
     impl<'a> Client<'a> {
@@ -179,7 +179,7 @@ pub mod thread_pool {
                 socket,
                 state: ClientState::Idle,
                 buffer,
-                config
+                config,
             }
         }
 
@@ -227,7 +227,7 @@ pub mod thread_pool {
                         1 => {
                             let id = msg.read_buffer()?;
                             let hex_id = hex::encode(&id);
-                            let download = Download::begin(id)?;
+                            let download = Download::begin(self.config, id)?;
                             println!("[{}] Begin download.", hex_id);
                             new_state = Some(ClientState::Download(download));
                         }
@@ -307,7 +307,7 @@ pub mod thread_pool {
         }
 
         #[allow(unused_must_use)]
-        fn send_error(&mut self, description: String) -> (){
+        fn send_error(&mut self, description: String) -> () {
             let mut message = Message::new();
             message.write_i8(-1);
             message.write_buffer(description.as_bytes());
@@ -335,7 +335,7 @@ pub mod thread_pool {
             match &self.state {
                 ClientState::Upload(upload) => {
                     println!("[{}] Interrupted!", hex::encode(upload.id));
-                    let mut path = PathBuf::from("uploads");
+                    let mut path = PathBuf::from(self.config.uploads());
                     path.push(hex::encode(upload.id));
                     match remove_file(path) {
                         Err(io_err) => {
@@ -379,8 +379,12 @@ pub mod thread_pool {
             Ok(upload)
         }
 
-        fn write_expiration(&mut self, config: &Config) -> Result<(), TransferError>{
-            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + config.expiration();
+        fn write_expiration(&mut self, config: &Config) -> Result<(), TransferError> {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + config.expiration();
             self.file.write_all(&timestamp.to_le_bytes())?;
             Ok(())
         }
@@ -401,8 +405,8 @@ pub mod thread_pool {
     }
 
     impl Download {
-        fn begin(id: Vec<u8>) -> Result<Self, TransferError> {
-            let mut path = PathBuf::from("uploads");
+        fn begin(config: &Config, id: Vec<u8>) -> Result<Self, TransferError> {
+            let mut path = PathBuf::from(config.uploads());
             path.push(hex::encode(&id));
             let mut file = File::open(path)?;
             file.seek(SeekFrom::Start(8))?;
@@ -455,7 +459,7 @@ pub mod thread_pool {
                         Err(error) => {
                             client.send_error(format!("{}", error));
                             remove = true;
-                        },
+                        }
                         _ => {}
                     }
 
@@ -463,7 +467,7 @@ pub mod thread_pool {
                         Err(error) => {
                             client.send_error(format!("{}", error));
                             remove = true;
-                        },
+                        }
                         _ => {}
                     }
 
