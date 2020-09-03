@@ -8,6 +8,8 @@ use std::ops::Deref;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::thread::sleep;
+use std::time::Duration;
 
 static mut SERVER: Option<Child> = None;
 lazy_static! {
@@ -52,7 +54,6 @@ fn encrypted_transfer() {
     link = link.replace('\n', "");
     let link_args: Vec<&str> = link.split(' ').collect();
 
-    println!("{:?}", link_args);
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -69,7 +70,7 @@ fn encrypted_transfer() {
             "---stdout---\n {}",
             String::from_utf8(receiver_output.stdout).unwrap()
         );
-        panic!("Receiver exited with non-zero exit code.");
+        panic!("Receiver exited with a non-zero exit code.");
     }
     check_test_file("../client/test-file");
     clean_up();
@@ -112,7 +113,6 @@ fn unencrypted_transfer() {
     link = link.replace('\n', "");
     let link_args: Vec<&str> = link.split(' ').collect();
 
-    println!("{:?}", link_args);
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -133,6 +133,66 @@ fn unencrypted_transfer() {
     }
     check_test_file("../client/test-file");
     clean_up();
+}
+
+#[test]
+fn expired(){
+    let _guard = MUTEX.deref().lock().unwrap();
+    unsafe {
+        SERVER = Some(
+            Command::new("cargo")
+                .stderr(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .args(&["run", "--", "--config", "../tests/tests/expire-config"])
+                .current_dir("../server")
+                .spawn()
+                .unwrap_or_else(unwrap_clean_up),
+        );
+    }
+    wait_for_server();
+    generate_test_file();
+    let sender = Command::new("cargo")
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .args(&["run", "--", "--quiet", "--no-encryption", "test-file"])
+        .current_dir("../client")
+        .spawn()
+        .unwrap_or_else(unwrap_clean_up);
+    let sender_output = sender.wait_with_output().unwrap_or_else(unwrap_clean_up);
+    if !sender_output.status.success() {
+        clean_up();
+        println!(
+            "---stdout---\n {}",
+            String::from_utf8(sender_output.stdout).unwrap()
+        );
+        panic!("Sender exited with a non-zero exit code.");
+    }
+    remove_test_file();
+    let mut link = String::from_utf8(sender_output.stdout).unwrap_or_else(unwrap_clean_up);
+    link = link.replace('\n', "");
+    let link_args: Vec<&str> = link.split(' ').collect();
+
+    sleep(Duration::from_secs(10));
+    let receiver = Command::new("cargo")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .args(&["run", "--", "--quiet"])
+        .args(&link_args[1..])
+        .current_dir("../client")
+        .spawn()
+        .unwrap();
+
+    let receiver_output = receiver.wait_with_output().unwrap_or_else(unwrap_clean_up);
+    if receiver_output.status.success() {
+        clean_up();
+        println!(
+            "---stdout---\n {}",
+            String::from_utf8(receiver_output.stdout).unwrap()
+        );
+        panic!("Receiver exited with a zero exit code.");
+    }
+    clean_up();
+
 }
 
 fn remove_test_file() {

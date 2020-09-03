@@ -160,7 +160,6 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool, quiet: bo
         let time = time.elapsed().as_micros() as f64;
         let size = file.seek(SeekFrom::Current(0)).unwrap();
         let speed = size as f64 / time * 1000000.0;
-
         printinfoln!(
             quiet,
             "Uploaded {:^12} @ {:^12}  \x1b[1A\x1b[0G",
@@ -262,6 +261,10 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool, qui
 }
 
 fn on_error<T>(err: TransferError) -> T {
+    let temp = Path::new(".sfshr-temp");
+    if temp.exists() {
+        fs::remove_file(temp).unwrap();
+    }
     println!("\x1b[31mTerminating due to an error ({})\x1b[0m", err);
     exit(1);
 }
