@@ -7,18 +7,38 @@ pub mod transfer {
     use std::convert::TryInto;
     use std::net::ToSocketAddrs;
     use std::string::FromUtf8Error;
+    use std::fmt::{Display, Formatter};
+    use std::fmt;
 
-    #[derive(Debug)]
     pub enum TransferError {
-        NetworkError,
+        NetworkError(simpletcp::simpletcp::Error),
         ServerError,
         EncryptionError,
         CorruptedMessage,
     }
 
+    impl Display for TransferError{
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            match &self {
+                TransferError::NetworkError(net_err) => {
+                    f.write_str(&format!("{:?}", net_err))
+                },
+                TransferError::ServerError => {
+                    f.write_str("ServerError")
+                },
+                TransferError::EncryptionError => {
+                    f.write_str("EncryptionError")
+                },
+                TransferError::CorruptedMessage => {
+                    f.write_str("CorruptedMessage")
+                },
+            }
+        }
+    }
+
     impl From<simpletcp::simpletcp::Error> for TransferError {
-        fn from(_: simpletcp::simpletcp::Error) -> Self {
-            TransferError::NetworkError
+        fn from(net_err: simpletcp::simpletcp::Error) -> Self {
+            TransferError::NetworkError(net_err)
         }
     }
 
