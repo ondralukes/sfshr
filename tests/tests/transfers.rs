@@ -8,6 +8,8 @@ use std::ops::Deref;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::thread::sleep;
+use std::time::Duration;
 
 static mut SERVER: Option<Child> = None;
 lazy_static! {
@@ -28,6 +30,7 @@ fn encrypted_transfer() {
                 .unwrap_or_else(unwrap_clean_up),
         );
     }
+    sleep(Duration::from_secs(2));
     generate_test_file();
     let sender = Command::new("cargo")
         .stderr(Stdio::null())
@@ -87,6 +90,7 @@ fn unencrypted_transfer() {
                 .unwrap_or_else(unwrap_clean_up),
         );
     }
+    sleep(Duration::from_secs(2));
     generate_test_file();
     let sender = Command::new("cargo")
         .stderr(Stdio::null())
