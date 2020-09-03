@@ -136,7 +136,7 @@ fn unencrypted_transfer() {
 }
 
 #[test]
-fn expired(){
+fn expired() {
     let _guard = MUTEX.deref().lock().unwrap();
     unsafe {
         SERVER = Some(
@@ -192,7 +192,6 @@ fn expired(){
         panic!("Receiver exited with a zero exit code.");
     }
     clean_up();
-
 }
 
 fn remove_test_file() {
