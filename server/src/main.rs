@@ -43,7 +43,7 @@ fn main() {
     });
     let mut pool = ThreadPool::new(&cfg);
     let server = TcpServer::new("0.0.0.0:40788").unwrap();
-
+    println!("ready");
     loop {
         match server.accept_blocking() {
             Ok(socket) => {
