@@ -5,10 +5,10 @@ pub mod transfer {
     use rand::{RngCore, SeedableRng};
     use simpletcp::simpletcp::{Message, MessageError, TcpStream};
     use std::convert::TryInto;
+    use std::fmt;
+    use std::fmt::{Display, Formatter};
     use std::net::ToSocketAddrs;
     use std::string::FromUtf8Error;
-    use std::fmt::{Display, Formatter};
-    use std::fmt;
 
     pub enum TransferError {
         NetworkError(simpletcp::simpletcp::Error),
@@ -17,21 +17,13 @@ pub mod transfer {
         CorruptedMessage,
     }
 
-    impl Display for TransferError{
+    impl Display for TransferError {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
             match &self {
-                TransferError::NetworkError(net_err) => {
-                    f.write_str(&format!("{:?}", net_err))
-                },
-                TransferError::ServerError => {
-                    f.write_str("ServerError")
-                },
-                TransferError::EncryptionError => {
-                    f.write_str("EncryptionError")
-                },
-                TransferError::CorruptedMessage => {
-                    f.write_str("CorruptedMessage")
-                },
+                TransferError::NetworkError(net_err) => f.write_str(&format!("{:?}", net_err)),
+                TransferError::ServerError => f.write_str("ServerError"),
+                TransferError::EncryptionError => f.write_str("EncryptionError"),
+                TransferError::CorruptedMessage => f.write_str("CorruptedMessage"),
             }
         }
     }
