@@ -167,18 +167,14 @@ pub mod thread_pool {
     struct Client<'a> {
         socket: TcpStream,
         state: ClientState,
-        buffer: Vec<u8>,
         config: &'a Config,
     }
 
     impl<'a> Client<'a> {
         fn new(socket: TcpStream, config: &'a Config) -> Self {
-            let mut buffer = Vec::new();
-            buffer.resize(32 * 1024 * 1024, 0);
             Self {
                 socket,
                 state: ClientState::Idle,
-                buffer,
                 config,
             }
         }
@@ -265,7 +261,7 @@ pub mod thread_pool {
             Ok(())
         }
 
-        fn flush_and_process(&mut self) -> Result<(), TransferError> {
+        fn flush_and_process(&mut self, buffer: &mut Vec<u8>) -> Result<(), TransferError> {
             let flushed = self.socket.flush()?;
 
             if flushed {
@@ -275,10 +271,10 @@ pub mod thread_pool {
                     ClientState::Download(download) => {
                         let mut message = Message::new();
 
-                        let bytes_read = download.read(&mut self.buffer)?;
+                        let bytes_read = download.read(buffer)?;
                         if bytes_read != 0 {
                             message.write_i8(1);
-                            message.write_buffer(&self.buffer[..bytes_read]);
+                            message.write_buffer(&buffer[..bytes_read]);
                             println!(
                                 "[{}] Downloaded {}",
                                 hex::encode(&download.id),
@@ -428,6 +424,8 @@ pub mod thread_pool {
         receiver: Receiver<ThreadMessage>,
         sockets_alive: Arc<AtomicUsize>,
     ) {
+        let mut thread_buffer = Vec::new();
+        thread_buffer.resize(32 * 1024 * 1024, 0);
         let mut clients = Vec::new();
         let mut fds = Vec::new();
         loop {
@@ -463,7 +461,7 @@ pub mod thread_pool {
                         _ => {}
                     }
 
-                    match client.flush_and_process() {
+                    match client.flush_and_process(&mut thread_buffer) {
                         Err(error) => {
                             client.send_error(format!("{}", error));
                             remove = true;
