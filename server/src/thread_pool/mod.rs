@@ -122,6 +122,7 @@ pub mod thread_pool {
         InvalidMessage,
         IOError,
         NetworkError,
+        SizeLimitExceeded,
     }
 
     impl Display for TransferError {
@@ -136,6 +137,9 @@ pub mod thread_pool {
                 TransferError::NetworkError => {
                     f.write_str("TransferError::NetworkError")
                 },
+                TransferError::SizeLimitExceeded => {
+                    f.write_str("TransferError::SizeLimitExceeded")
+                }
             }
         }
     }
@@ -216,6 +220,7 @@ pub mod thread_pool {
 
                             let mut response = Message::new();
                             response.write_buffer(&upload.id);
+                            response.write_u64(self.config.max_size());
                             self.socket.write(&response)?;
                             println!("[{}] Begin upload.", hex::encode(upload.id));
                             new_state = Some(ClientState::Upload(upload));
@@ -242,6 +247,9 @@ pub mod thread_pool {
                         let buffer = msg.read_buffer()?;
                         upload.write(&buffer)?;
                         let position = upload.position()?;
+                        if position > self.config.max_size() {
+                            return Err(TransferError::SizeLimitExceeded);
+                        }
                         println!(
                             "[{}] Uploaded {}",
                             hex::encode(upload.id),
@@ -310,24 +318,8 @@ pub mod thread_pool {
 
             self.socket.write(&message);
         }
-    }
 
-    #[cfg(unix)]
-    impl AsRawFd for Client<'_> {
-        fn as_raw_fd(&self) -> i32 {
-            self.socket.as_raw_fd()
-        }
-    }
-
-    #[cfg(windows)]
-    impl AsRawSocket for Client<'_> {
-        fn as_raw_socket(&self) -> i32 {
-            self.socket.as_raw_socket()
-        }
-    }
-
-    impl Drop for Client<'_> {
-        fn drop(&mut self) {
+        fn break_operation(&mut self) -> () {
             match &self.state {
                 ClientState::Upload(upload) => {
                     println!("[{}] Interrupted!", hex::encode(upload.id));
@@ -346,6 +338,27 @@ pub mod thread_pool {
                 }
                 _ => {}
             }
+            self.state = ClientState::Idle;
+        }
+    }
+
+    #[cfg(unix)]
+    impl AsRawFd for Client<'_> {
+        fn as_raw_fd(&self) -> i32 {
+            self.socket.as_raw_fd()
+        }
+    }
+
+    #[cfg(windows)]
+    impl AsRawSocket for Client<'_> {
+        fn as_raw_socket(&self) -> i32 {
+            self.socket.as_raw_socket()
+        }
+    }
+
+    impl Drop for Client<'_> {
+        fn drop(&mut self) {
+            self.break_operation();
         }
     }
 
@@ -456,7 +469,13 @@ pub mod thread_pool {
                     match client.read_and_process() {
                         Err(error) => {
                             client.send_error(format!("{}", error));
-                            remove = true;
+                            match error {
+                                TransferError::NetworkError => {
+                                    remove = true;
+                                }
+                                _ => {}
+                            }
+                            client.break_operation();
                         }
                         _ => {}
                     }
@@ -464,7 +483,13 @@ pub mod thread_pool {
                     match client.flush_and_process(&mut thread_buffer) {
                         Err(error) => {
                             client.send_error(format!("{}", error));
-                            remove = true;
+                            match error {
+                                TransferError::NetworkError => {
+                                    remove = true;
+                                }
+                                _ => {}
+                            }
+                            client.break_operation();
                         }
                         _ => {}
                     }
