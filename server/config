@@ -16,3 +16,15 @@ THREAD_COUNT=8
 # Defaults to "uploads"
 
 UPLOADS=uploads
+
+
+# Maximal size of individual file
+# Defaults to 1 048 576 (1 MiB)
+
+MAX_SIZE=1 048 576
+
+
+# Maximal size of all uploaded files
+# Defaults to 268 435 456 (256 MiB)
+
+MAX_TOTAL_SIZE=268 435 456

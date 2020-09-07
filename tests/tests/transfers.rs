@@ -194,6 +194,42 @@ fn expired() {
     clean_up();
 }
 
+#[test]
+fn size_exceeded() {
+    let _guard = MUTEX.deref().lock().unwrap();
+    unsafe {
+        SERVER = Some(
+            Command::new("cargo")
+                .stderr(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .args(&["run", "--", "--config", "../tests/tests/size-exceed-config"])
+                .current_dir("../server")
+                .spawn()
+                .unwrap_or_else(unwrap_clean_up),
+        );
+    }
+    wait_for_server();
+    generate_test_file();
+    let sender = Command::new("cargo")
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .args(&["run", "--", "--quiet", "--no-encryption", "test-file"])
+        .current_dir("../client")
+        .spawn()
+        .unwrap_or_else(unwrap_clean_up);
+    let sender_output = sender.wait_with_output().unwrap_or_else(unwrap_clean_up);
+    if sender_output.status.success() {
+        clean_up();
+        println!(
+            "---stdout---\n {}",
+            String::from_utf8(sender_output.stdout).unwrap()
+        );
+        panic!("Sender exited with a zero exit code.");
+    }
+    remove_test_file();
+    clean_up();
+}
+
 fn remove_test_file() {
     let client_temp = Path::new("../client/test-file");
     if client_temp.exists() {

@@ -140,8 +140,9 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool, quiet: bo
     }
 
     let mut file = file.unwrap();
+    let file_size = file.metadata().unwrap().len();
 
-    let mut upload = Upload::new(addr, encrypt).unwrap_or_else(on_error);
+    let mut upload = Upload::new(addr, encrypt, file_size).unwrap_or_else(on_error);
 
     upload
         .write_filename(filepath.file_name().unwrap().to_str().unwrap())
@@ -156,6 +157,7 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool, quiet: bo
             break;
         }
 
+        upload.check_for_error().unwrap_or_else(on_error);
         upload.send(&buf[..bytes_read]).unwrap_or_else(on_error);
         let time = time.elapsed().as_micros() as f64;
         let size = file.seek(SeekFrom::Current(0)).unwrap();
@@ -169,6 +171,7 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool, quiet: bo
     }
 
     upload.finalize().unwrap_or_else(on_error);
+    upload.check_for_error().unwrap_or_else(on_error);
     let time = time.elapsed().as_micros() as f64;
     let size = file.seek(SeekFrom::Current(0)).unwrap();
     let speed = size as f64 / time * 1000000.0;

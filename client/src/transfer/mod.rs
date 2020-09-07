@@ -15,6 +15,7 @@ pub mod transfer {
         ServerError,
         EncryptionError,
         CorruptedMessage,
+        SizeLimitExceeded,
     }
 
     impl Display for TransferError {
@@ -24,6 +25,7 @@ pub mod transfer {
                 TransferError::ServerError => f.write_str("ServerError"),
                 TransferError::EncryptionError => f.write_str("EncryptionError"),
                 TransferError::CorruptedMessage => f.write_str("CorruptedMessage"),
+                TransferError::SizeLimitExceeded => f.write_str("SizeLimitExceeded"),
             }
         }
     }
@@ -61,7 +63,11 @@ pub mod transfer {
     }
 
     impl Upload {
-        pub fn new<A: ToSocketAddrs>(addr: A, encrypt: bool) -> Result<Self, TransferError> {
+        pub fn new<A: ToSocketAddrs>(
+            addr: A,
+            encrypt: bool,
+            size: u64,
+        ) -> Result<Self, TransferError> {
             let mut conn = TcpStream::connect(&addr)?;
             conn.wait_until_ready()?;
             let mut message = Message::new();
@@ -76,6 +82,10 @@ pub mod transfer {
                 }
                 Some(mut msg) => {
                     id = msg.read_buffer()?;
+                    let max_size = msg.read_u64()?;
+                    if size > max_size {
+                        return Err(TransferError::SizeLimitExceeded);
+                    }
                 }
             }
 
@@ -167,7 +177,7 @@ pub mod transfer {
                     if msg.read_i8().unwrap() != 1 {
                         match msg.read_buffer() {
                             Ok(description) => {
-                                println!("Received an error message:");
+                                println!("\x1b[KReceived an error message:");
                                 println!("\n{}\n", String::from_utf8(description)?);
                             }
                             _ => {}
@@ -177,6 +187,25 @@ pub mod transfer {
                 }
             }
 
+            Ok(())
+        }
+
+        pub fn check_for_error(&mut self) -> Result<(), TransferError> {
+            match self.conn.read_timeout(0)? {
+                None => {}
+                Some(mut msg) => {
+                    if msg.read_i8().unwrap() == -1 {
+                        match msg.read_buffer() {
+                            Ok(description) => {
+                                println!("\x1b[KReceived an error message:");
+                                println!("\n{}\n", String::from_utf8(description)?);
+                            }
+                            _ => {}
+                        }
+                        return Err(TransferError::ServerError);
+                    }
+                }
+            }
             Ok(())
         }
 

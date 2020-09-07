@@ -14,9 +14,9 @@ pub mod thread_pool {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering::{Acquire, Release};
     use std::sync::mpsc::{channel, Receiver, Sender};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::thread::{spawn, JoinHandle};
-    use std::{fmt, io};
+    use std::{fmt, fs, io};
 
     #[cfg(unix)]
     use std::os::unix::io::AsRawFd;
@@ -24,6 +24,7 @@ pub mod thread_pool {
     use crate::config::config::Config;
     use simpletcp::utils::{EV_POLLIN, EV_POLLOUT};
     use std::fmt::{Display, Formatter};
+
     #[cfg(windows)]
     use std::os::unix::io::AsRawSocket;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,21 +32,42 @@ pub mod thread_pool {
     pub struct ThreadPool<'a> {
         threads: Vec<Thread>,
         _config: &'a Config,
+        total_size: Arc<Mutex<u64>>,
     }
 
     impl<'a> ThreadPool<'a> {
-        pub fn new(config: &'a Config) -> ThreadPool {
+        pub fn new(config: &'a Config, total_size: &Arc<Mutex<u64>>) -> ThreadPool<'a> {
+            {
+                let mut total_size = total_size.lock().unwrap();
+                let dir = fs::read_dir(config.uploads()).unwrap();
+                for entry in dir {
+                    let entry = entry.unwrap();
+                    if entry.file_type().unwrap().is_file() {
+                        *total_size += entry.metadata().unwrap().len();
+                    }
+                }
+            }
             let mut res = ThreadPool {
                 threads: Vec::new(),
                 _config: config,
+                total_size: total_size.clone(),
             };
             for i in 0..config.thread_count() {
                 let (tx, rx): (Sender<ThreadMessage>, Receiver<ThreadMessage>) = channel();
                 let sockets_alive = Arc::new(AtomicUsize::new(0));
                 let sockets_alive_clone = sockets_alive.clone();
                 let config_clone = config.clone();
+                let total_size_clone = res.total_size.clone();
                 let join_handle = spawn(move || {
-                    thread_loop(i, config_clone, rx, sockets_alive_clone);
+                    thread_loop(
+                        i,
+                        ThreadParams {
+                            sockets_alive: sockets_alive_clone,
+                            total_size: total_size_clone,
+                            config: config_clone,
+                            receiver: rx,
+                        },
+                    );
                 });
                 res.threads.push(Thread {
                     join_handle,
@@ -84,7 +106,7 @@ pub mod thread_pool {
         }
     }
 
-    trait FormatSize {
+    pub trait FormatSize {
         fn format_size(self) -> String;
     }
 
@@ -113,6 +135,13 @@ pub mod thread_pool {
         sockets_alive: Arc<AtomicUsize>,
     }
 
+    struct ThreadParams {
+        sockets_alive: Arc<AtomicUsize>,
+        total_size: Arc<Mutex<u64>>,
+        config: Config,
+        receiver: Receiver<ThreadMessage>,
+    }
+
     enum ThreadMessage {
         Terminate,
         Accept(TcpStream),
@@ -122,6 +151,7 @@ pub mod thread_pool {
         InvalidMessage,
         IOError,
         NetworkError,
+        SizeLimitExceeded,
     }
 
     impl Display for TransferError {
@@ -136,6 +166,9 @@ pub mod thread_pool {
                 TransferError::NetworkError => {
                     f.write_str("TransferError::NetworkError")
                 },
+                TransferError::SizeLimitExceeded => {
+                    f.write_str("TransferError::SizeLimitExceeded")
+                }
             }
         }
     }
@@ -167,15 +200,17 @@ pub mod thread_pool {
     struct Client<'a> {
         socket: TcpStream,
         state: ClientState,
-        config: &'a Config,
+        params: &'a ThreadParams,
+        file_size_reserved: u64,
     }
 
     impl<'a> Client<'a> {
-        fn new(socket: TcpStream, config: &'a Config) -> Self {
+        fn new(socket: TcpStream, params: &'a ThreadParams) -> Self {
             Self {
                 socket,
                 state: ClientState::Idle,
-                config,
+                params,
+                file_size_reserved: 0,
             }
         }
 
@@ -212,19 +247,30 @@ pub mod thread_pool {
                     let command = msg.read_i32()?;
                     match command {
                         0 => {
-                            let upload = Upload::begin(self.config)?;
+                            let upload = Upload::begin(&self.params.config)?;
+
+                            let mut max_size = self.params.config.max_size();
+                            {
+                                let mut total_size = self.params.total_size.lock().unwrap();
+                                let max_total = self.params.config.max_total_size();
+                                if (max_total - *total_size) < max_size {
+                                    max_size = max_total - *total_size;
+                                }
+
+                                *total_size += max_size;
+                            }
+
+                            self.file_size_reserved += max_size;
 
                             let mut response = Message::new();
                             response.write_buffer(&upload.id);
+                            response.write_u64(self.params.config.max_size());
                             self.socket.write(&response)?;
-                            println!("[{}] Begin upload.", hex::encode(upload.id));
                             new_state = Some(ClientState::Upload(upload));
                         }
                         1 => {
                             let id = msg.read_buffer()?;
-                            let hex_id = hex::encode(&id);
-                            let download = Download::begin(self.config, id)?;
-                            println!("[{}] Begin download.", hex_id);
+                            let download = Download::begin(&self.params.config, id)?;
                             new_state = Some(ClientState::Download(download));
                         }
                         _ => {}
@@ -233,20 +279,23 @@ pub mod thread_pool {
                 ClientState::Upload(upload) => {
                     let cont = msg.read_u8()?;
                     if cont == 0 {
-                        println!("[{}] Completed", hex::encode(upload.id));
                         let mut confirm_msg = Message::new();
                         confirm_msg.write_i8(1);
                         self.socket.write(&confirm_msg)?;
                         new_state = Some(ClientState::Idle);
+
+                        //Free unused allocated space
+                        {
+                            let mut total_size = self.params.total_size.lock().unwrap();
+                            *total_size -= self.file_size_reserved - upload.position()?;
+                        }
                     } else {
                         let buffer = msg.read_buffer()?;
                         upload.write(&buffer)?;
                         let position = upload.position()?;
-                        println!(
-                            "[{}] Uploaded {}",
-                            hex::encode(upload.id),
-                            position.format_size()
-                        );
+                        if position > self.file_size_reserved {
+                            return Err(TransferError::SizeLimitExceeded);
+                        }
                     }
                 }
                 _ => {}
@@ -275,15 +324,9 @@ pub mod thread_pool {
                         if bytes_read != 0 {
                             message.write_i8(1);
                             message.write_buffer(&buffer[..bytes_read]);
-                            println!(
-                                "[{}] Downloaded {}",
-                                hex::encode(&download.id),
-                                download.position()?.format_size()
-                            );
                         } else {
                             message.write_i8(0);
                             new_state = Some(ClientState::Idle);
-                            println!("[{}] Completed", hex::encode(&download.id));
                         }
 
                         self.socket.write(&message)?;
@@ -310,6 +353,34 @@ pub mod thread_pool {
 
             self.socket.write(&message);
         }
+
+        fn break_operation(&mut self) -> () {
+            match &self.state {
+                ClientState::Upload(upload) => {
+                    let mut path = PathBuf::from(self.params.config.uploads());
+                    path.push(hex::encode(upload.id));
+                    match remove_file(path) {
+                        Err(io_err) => {
+                            println!(
+                                "[{}] Failed to remove file: {:?}",
+                                hex::encode(upload.id),
+                                io_err
+                            );
+                        }
+                        _ => {}
+                    }
+
+                    //Free allocated space
+                    {
+                        let mut total_size = self.params.total_size.lock().unwrap();
+                        *total_size -= self.file_size_reserved;
+                        self.file_size_reserved = 0;
+                    }
+                }
+                _ => {}
+            }
+            self.state = ClientState::Idle;
+        }
     }
 
     #[cfg(unix)]
@@ -328,24 +399,7 @@ pub mod thread_pool {
 
     impl Drop for Client<'_> {
         fn drop(&mut self) {
-            match &self.state {
-                ClientState::Upload(upload) => {
-                    println!("[{}] Interrupted!", hex::encode(upload.id));
-                    let mut path = PathBuf::from(self.config.uploads());
-                    path.push(hex::encode(upload.id));
-                    match remove_file(path) {
-                        Err(io_err) => {
-                            println!(
-                                "[{}] Failed to remove file: {:?}",
-                                hex::encode(upload.id),
-                                io_err
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
+            self.break_operation();
         }
     }
 
@@ -397,6 +451,7 @@ pub mod thread_pool {
 
     struct Download {
         file: File,
+        #[allow(dead_code)]
         id: Vec<u8>,
     }
 
@@ -413,17 +468,15 @@ pub mod thread_pool {
             Ok(self.file.read(buffer)?)
         }
 
+        #[allow(dead_code)]
         fn position(&mut self) -> Result<u64, TransferError> {
             Ok(self.file.seek(SeekFrom::Current(0))?)
         }
     }
 
-    fn thread_loop(
-        thread_id: u64,
-        config: Config,
-        receiver: Receiver<ThreadMessage>,
-        sockets_alive: Arc<AtomicUsize>,
-    ) {
+    fn thread_loop(thread_id: u64, params: ThreadParams) {
+        let receiver = &params.receiver;
+        let sockets_alive = &params.sockets_alive;
         let mut thread_buffer = Vec::new();
         thread_buffer.resize(32 * 1024 * 1024, 0);
         let mut clients = Vec::new();
@@ -436,7 +489,7 @@ pub mod thread_pool {
                     }
                     ThreadMessage::Accept(mut socket) => {
                         if socket.get_ready().is_ok() {
-                            clients.push(Client::new(socket, &config));
+                            clients.push(Client::new(socket, &params));
                             fds = simpletcp::utils::get_fd_array(&clients);
                             sockets_alive.store(clients.len(), Release);
                         }
@@ -456,7 +509,13 @@ pub mod thread_pool {
                     match client.read_and_process() {
                         Err(error) => {
                             client.send_error(format!("{}", error));
-                            remove = true;
+                            match error {
+                                TransferError::NetworkError => {
+                                    remove = true;
+                                }
+                                _ => {}
+                            }
+                            client.break_operation();
                         }
                         _ => {}
                     }
@@ -464,7 +523,13 @@ pub mod thread_pool {
                     match client.flush_and_process(&mut thread_buffer) {
                         Err(error) => {
                             client.send_error(format!("{}", error));
-                            remove = true;
+                            match error {
+                                TransferError::NetworkError => {
+                                    remove = true;
+                                }
+                                _ => {}
+                            }
+                            client.break_operation();
                         }
                         _ => {}
                     }
