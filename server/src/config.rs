@@ -10,6 +10,7 @@ pub mod config {
         thread_count: u64,
         uploads: String,
         max_size: u64,
+        max_total_size: u64,
     }
 
     impl Config {
@@ -22,6 +23,7 @@ pub mod config {
             let mut expiration = 10800;
             let mut thread_count = 8;
             let mut max_size = 1048576;
+            let mut max_total_size = 268435456;
             let mut uploads = String::from("uploads");
             let mut file = file.unwrap();
             let mut str = String::new();
@@ -80,6 +82,17 @@ pub mod config {
                     }
 
                     max_size = parse.unwrap();
+                } else if key == "MAX_TOTAL_SIZE" {
+                    let parse = u64::from_str(value);
+                    if parse.is_err() {
+                        println!(
+                            "Config parsing failed: failed to parse \"{}\" as u64 at line {}",
+                            value, line
+                        );
+                        exit(1);
+                    }
+
+                    max_total_size = parse.unwrap();
                 } else if key == "UPLOADS" {
                     uploads = String::from(value);
                 } else {
@@ -92,6 +105,7 @@ pub mod config {
                 thread_count,
                 uploads,
                 max_size,
+                max_total_size,
             }
         }
 
@@ -107,6 +121,9 @@ pub mod config {
         pub fn max_size(&self) -> u64 {
             self.max_size
         }
+        pub fn max_total_size(&self) -> u64 {
+            self.max_total_size
+        }
     }
 
     impl Clone for Config {
@@ -116,6 +133,7 @@ pub mod config {
                 thread_count: self.thread_count,
                 uploads: self.uploads.clone(),
                 max_size: self.max_size,
+                max_total_size: self.max_total_size,
             }
         }
     }
