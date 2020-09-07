@@ -266,14 +266,11 @@ pub mod thread_pool {
                             response.write_buffer(&upload.id);
                             response.write_u64(self.params.config.max_size());
                             self.socket.write(&response)?;
-                            println!("[{}] Begin upload.", hex::encode(upload.id));
                             new_state = Some(ClientState::Upload(upload));
                         }
                         1 => {
                             let id = msg.read_buffer()?;
-                            let hex_id = hex::encode(&id);
                             let download = Download::begin(&self.params.config, id)?;
-                            println!("[{}] Begin download.", hex_id);
                             new_state = Some(ClientState::Download(download));
                         }
                         _ => {}
@@ -282,7 +279,6 @@ pub mod thread_pool {
                 ClientState::Upload(upload) => {
                     let cont = msg.read_u8()?;
                     if cont == 0 {
-                        println!("[{}] Completed", hex::encode(upload.id));
                         let mut confirm_msg = Message::new();
                         confirm_msg.write_i8(1);
                         self.socket.write(&confirm_msg)?;
@@ -300,11 +296,6 @@ pub mod thread_pool {
                         if position > self.file_size_reserved {
                             return Err(TransferError::SizeLimitExceeded);
                         }
-                        println!(
-                            "[{}] Uploaded {}",
-                            hex::encode(upload.id),
-                            position.format_size()
-                        );
                     }
                 }
                 _ => {}
@@ -333,15 +324,9 @@ pub mod thread_pool {
                         if bytes_read != 0 {
                             message.write_i8(1);
                             message.write_buffer(&buffer[..bytes_read]);
-                            println!(
-                                "[{}] Downloaded {}",
-                                hex::encode(&download.id),
-                                download.position()?.format_size()
-                            );
                         } else {
                             message.write_i8(0);
                             new_state = Some(ClientState::Idle);
-                            println!("[{}] Completed", hex::encode(&download.id));
                         }
 
                         self.socket.write(&message)?;
@@ -372,7 +357,6 @@ pub mod thread_pool {
         fn break_operation(&mut self) -> () {
             match &self.state {
                 ClientState::Upload(upload) => {
-                    println!("[{}] Interrupted!", hex::encode(upload.id));
                     let mut path = PathBuf::from(self.params.config.uploads());
                     path.push(hex::encode(upload.id));
                     match remove_file(path) {
@@ -467,6 +451,7 @@ pub mod thread_pool {
 
     struct Download {
         file: File,
+        #[allow(dead_code)]
         id: Vec<u8>,
     }
 
@@ -483,6 +468,7 @@ pub mod thread_pool {
             Ok(self.file.read(buffer)?)
         }
 
+        #[allow(dead_code)]
         fn position(&mut self) -> Result<u64, TransferError> {
             Ok(self.file.seek(SeekFrom::Current(0))?)
         }
