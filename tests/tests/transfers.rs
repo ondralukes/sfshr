@@ -36,7 +36,14 @@ fn encrypted_transfer() {
     let sender = Command::new("cargo")
         .stderr(Stdio::inherit())
         .stdout(Stdio::piped())
-        .args(&["run", "--", "--quiet", "test-file"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--server",
+            "localhost:40788",
+            "test-file",
+        ])
         .current_dir("../client")
         .spawn()
         .unwrap_or_else(unwrap_clean_up);
@@ -95,7 +102,15 @@ fn unencrypted_transfer() {
     let sender = Command::new("cargo")
         .stderr(Stdio::inherit())
         .stdout(Stdio::piped())
-        .args(&["run", "--", "--quiet", "--no-encryption", "test-file"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--server",
+            "localhost:40788",
+            "--no-encryption",
+            "test-file",
+        ])
         .current_dir("../client")
         .spawn()
         .unwrap_or_else(unwrap_clean_up);
@@ -154,7 +169,15 @@ fn expired() {
     let sender = Command::new("cargo")
         .stderr(Stdio::inherit())
         .stdout(Stdio::piped())
-        .args(&["run", "--", "--quiet", "--no-encryption", "test-file"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--server",
+            "localhost:40788",
+            "--no-encryption",
+            "test-file",
+        ])
         .current_dir("../client")
         .spawn()
         .unwrap_or_else(unwrap_clean_up);
@@ -213,7 +236,15 @@ fn size_exceeded() {
     let sender = Command::new("cargo")
         .stderr(Stdio::inherit())
         .stdout(Stdio::piped())
-        .args(&["run", "--", "--quiet", "--no-encryption", "test-file"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--server",
+            "localhost:40788",
+            "--no-encryption",
+            "test-file",
+        ])
         .current_dir("../client")
         .spawn()
         .unwrap_or_else(unwrap_clean_up);

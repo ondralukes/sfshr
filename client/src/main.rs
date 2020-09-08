@@ -39,6 +39,7 @@ fn main() {
     let mut receive = false;
     let mut quiet = false;
     let mut main_arg = None;
+    let mut server = String::from("ondralukes.cz:40788");
 
     loop {
         match args.next() {
@@ -55,9 +56,20 @@ fn main() {
                     println!(" -r [download key] - download file");
                     println!(" -n --no-encryption - do not encrypt or decrypt the file");
                     println!(" -q --quiet - do not print anything (expect download key)");
+                    println!(" -s --server [hostname:port] - specify sfshr server (default: 'ondralukes.cz:40788')");
                     exit(0);
                 } else if arg == "-q" || arg == "--quiet" {
                     quiet = true;
+                } else if arg == "-s" || arg == "--server" {
+                    match args.next() {
+                        None => {
+                            println!("Expected value for --server");
+                            exit(1);
+                        }
+                        Some(val) => {
+                            server = val;
+                        }
+                    }
                 } else {
                     main_arg = Some(arg);
                 }
@@ -72,7 +84,7 @@ fn main() {
         }
 
         let path = PathBuf::from(main_arg.unwrap());
-        upload("localhost:40788", path, encrypt, quiet);
+        upload(server, path, encrypt, quiet);
     } else {
         if main_arg.is_none() {
             printinfoln!(quiet, "No download key specified!");
@@ -83,7 +95,7 @@ fn main() {
             printinfoln!(quiet, "Invalid download key format!");
             exit(1);
         }
-        download("localhost:40788", download_key.unwrap(), encrypt, quiet);
+        download(server, download_key.unwrap(), encrypt, quiet);
     }
 }
 
@@ -132,7 +144,7 @@ impl FormatSize for f64 {
     }
 }
 
-fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool, quiet: bool) {
+fn upload(addr: String, filepath: PathBuf, encrypt: bool, quiet: bool) {
     let file = File::open(&filepath);
     if file.is_err() {
         printinfoln!(quiet, "Failed to open file: {}", file.err().unwrap());
@@ -142,7 +154,7 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool, quiet: bo
     let mut file = file.unwrap();
     let file_size = file.metadata().unwrap().len();
 
-    let mut upload = Upload::new(addr, encrypt, file_size).unwrap_or_else(on_error);
+    let mut upload = Upload::new(&addr, encrypt, file_size).unwrap_or_else(on_error);
 
     upload
         .write_filename(filepath.file_name().unwrap().to_str().unwrap())
@@ -189,10 +201,18 @@ fn upload<A: ToSocketAddrs>(addr: A, filepath: PathBuf, encrypt: bool, quiet: bo
         download_key.extend_from_slice(upload.key().unwrap());
     }
 
+    let mut server_extra = String::new();
+    if &addr != "ondralukes.cz:40788" {
+        server_extra = format!(" --server {}", addr);
+    }
     if encrypt {
-        println!("sfshr -r {}", base64::encode(&download_key));
+        println!("sfshr{} -r {}", server_extra, base64::encode(&download_key));
     } else {
-        println!("sfshr --no-encryption -r {}", base64::encode(&download_key));
+        println!(
+            "sfshr --no-encryption{} -r {}",
+            server_extra,
+            base64::encode(&download_key)
+        );
     }
 }
 
