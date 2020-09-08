@@ -1,0 +1,55 @@
+name: Deployment
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      
+    - name: Setting up SSH key temp file
+      env:
+        KEY: ${{ secrets.DEPLOYER_SSH_KEY }}
+      run: |
+        touch ./ssh_key
+        chmod 0600 ./ssh_key
+        echo -e "$KEY" > ./ssh_key
+        
+    - name: Deploying
+      run: |
+        ssh -o StrictHostKeyChecking=no -i ./ssh_key -l sfshr-deploy ondralukes.cz << sshend
+        TEMP_DIR=$(mktemp -d -t cd-XXXXXX)
+        echo \${TEMP_DIR}
+        cd \${TEMP_DIR}
+        RESULT=0
+        if git clone https://github.com/ondralukes/sfshr.git; then
+          cd sfshr/server
+          git checkout dockerize
+          docker stop sfshr-server || true
+          docker rm sfshr-server || true
+          if docker build --tag sfshr-server .; then
+            if docker run --name sfshr-server -p 40788:40788 -d sfshr-server; then
+              echo "Deployment successful!"
+            else
+              echo "Failed to start container."
+              RESULT=1
+            fi
+          else
+            echo "Failed to build."
+            RESULT=1
+          fi
+        else
+          echo "Failed to clone repo."
+          RESULT=1
+        fi
+        rm -rf \${TEMP_DIR}
+        exit \${RESULT}
+        sshend
+    
+    - name: Clean-up
+      run: |
+        rm -f ./ssh_key
