@@ -478,7 +478,7 @@ pub mod thread_pool {
         let receiver = &params.receiver;
         let sockets_alive = &params.sockets_alive;
         let mut thread_buffer = Vec::new();
-        thread_buffer.resize(32 * 1024 * 1024, 0);
+        thread_buffer.resize(1024 * 1024, 0);
         let mut clients = Vec::new();
         let mut fds = Vec::new();
         loop {
