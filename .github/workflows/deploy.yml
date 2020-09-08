@@ -28,16 +28,8 @@ jobs:
         RESULT=0
         if git clone https://github.com/ondralukes/sfshr.git; then
           cd sfshr/server
-          git checkout dockerize
-          docker stop sfshr-server || true
-          docker rm sfshr-server || true
-          if docker build --tag sfshr-server .; then
-            if docker run --name sfshr-server -p 40788:40788 -d sfshr-server; then
-              echo "Deployment successful!"
-            else
-              echo "Failed to start container."
-              RESULT=1
-            fi
+          if docker-compose up -d --build; then
+            echo "Deployment successful!"
           else
             echo "Failed to build."
             RESULT=1
