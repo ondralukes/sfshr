@@ -22,7 +22,7 @@ jobs:
     - name: Deploying
       run: |
         ssh -o StrictHostKeyChecking=no -i ./ssh_key -l sfshr-deploy ondralukes.cz << sshend
-        TEMP_DIR=$(mktemp -d -t cd-XXXXXX)
+        TEMP_DIR=\$(mktemp -d -t cd-XXXXXX)
         echo \${TEMP_DIR}
         cd \${TEMP_DIR}
         RESULT=0
