@@ -1,0 +1,10 @@
+version: '2.0'
+services:
+  sfshr-server:
+    build: .
+    container_name: sfshr-server
+    restart: unless-stopped
+    ports:
+      - "40788:40788"
+    volumes:
+      - /var/sfshr/:/var/sfshr/
