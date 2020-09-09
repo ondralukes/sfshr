@@ -29,7 +29,12 @@ jobs:
         if git clone https://github.com/ondralukes/sfshr.git; then
           cd sfshr/server
           if docker-compose up -d --build; then
-            echo "Deployment successful!"
+            if docker network connect docker-network sfshr-server; then
+              echo "Deployment successful!"
+            else
+              echo "Failed to connect container to the network"
+              RESULT=1
+            fi
           else
             echo "Failed to build."
             RESULT=1
