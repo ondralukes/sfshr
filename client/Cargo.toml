@@ -1,7 +1,13 @@
 [package]
 name = "sfshr"
 version = "0.1.0"
+license = "MIT"
+description = "Command-line tool for secure, end-to-end encrypted file sharing"
+categories = ["command-line-utilities", "filesystem", "network-programming", "cryptography"]
+keywords = ["share", "file", "file-share", "encrypted"]
 authors = ["ondralukes <mail@ondralukes.cz>"]
+repository = "https://github.com/ondralukes/sfshr"
+readme = "README.md"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
