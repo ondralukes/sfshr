@@ -102,7 +102,8 @@ fn upload(
     quiet: bool,
     keep_tar: Option<String>,
 ) {
-    let mut upload = Upload::new(&addr, encrypt, quiet).unwrap_or_else(on_error);
+    let size = dir_size(&filepath);
+    let mut upload = Upload::new(&addr, encrypt, quiet, size).unwrap_or_else(on_error);
     let mut archive = Builder::new(upload);
 
     match filepath.canonicalize() {
@@ -156,6 +157,19 @@ fn upload(
             base64::encode(&download_key)
         );
     }
+}
+
+fn dir_size(path: &PathBuf) -> usize {
+    if path.is_file() {
+        return path.metadata().unwrap().len() as usize;
+    }
+    let mut size = 0;
+    let dir = fs::read_dir(path).unwrap();
+    for entry in dir {
+        let entry = entry.unwrap();
+        size += dir_size(&entry.path());
+    }
+    size
 }
 
 fn download<A: ToSocketAddrs>(

@@ -140,6 +140,7 @@ pub mod transfer {
             addr: A,
             encrypt: bool,
             quiet: bool,
+            size: usize,
         ) -> Result<Self, TransferError> {
             let mut conn = TcpStream::connect(&addr)?;
             conn.wait_until_ready()?;
@@ -155,10 +156,10 @@ pub mod transfer {
                 }
                 Some(mut msg) => {
                     id = msg.read_buffer()?;
-                    // let max_size = msg.read_u64()?;
-                    // if size > max_size {
-                    //     return Err(TransferError::SizeLimitExceeded);
-                    // }
+                    let max_size = msg.read_u64()?;
+                    if size > max_size as usize {
+                        return Err(TransferError::SizeLimitExceeded);
+                    }
                 }
             }
 
