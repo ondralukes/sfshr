@@ -270,7 +270,7 @@ pub mod thread_pool {
                         }
                         1 => {
                             let id = msg.read_buffer()?;
-                            let download = Download::begin(&self.params.config, id)?;
+                            let download = Download::begin(&self.params.config, id.to_vec())?;
                             new_state = Some(ClientState::Download(download));
                         }
                         _ => {}
@@ -291,7 +291,7 @@ pub mod thread_pool {
                         }
                     } else {
                         let buffer = msg.read_buffer()?;
-                        upload.write(&buffer)?;
+                        upload.write(buffer)?;
                         let position = upload.position()?;
                         if position > self.file_size_reserved {
                             return Err(TransferError::SizeLimitExceeded);
