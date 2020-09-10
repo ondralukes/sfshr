@@ -9,7 +9,6 @@ use crate::transfer::transfer::{Download, Upload};
 use std::convert::TryInto;
 use std::env::args;
 use std::fs::File;
-use std::io::Error;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::exit;
