@@ -155,7 +155,7 @@ pub mod transfer {
                     return Err(TransferError::ServerError);
                 }
                 Some(mut msg) => {
-                    id = msg.read_buffer()?;
+                    id = msg.read_buffer()?.to_vec();
                     let max_size = msg.read_u64()?;
                     if size > max_size as usize {
                         return Err(TransferError::SizeLimitExceeded);
@@ -226,7 +226,7 @@ pub mod transfer {
                         match msg.read_buffer() {
                             Ok(description) => {
                                 println!("\x1b[KReceived an error message:");
-                                println!("\n{}\n", String::from_utf8(description)?);
+                                println!("\n{}\n", String::from_utf8(description.to_vec())?);
                             }
                             _ => {}
                         }
@@ -246,7 +246,7 @@ pub mod transfer {
                         match msg.read_buffer() {
                             Ok(description) => {
                                 println!("\x1b[KReceived an error message:");
-                                println!("\n{}\n", String::from_utf8(description)?);
+                                println!("\n{}\n", String::from_utf8(description.to_vec())?);
                             }
                             _ => {}
                         }
@@ -412,7 +412,7 @@ pub mod transfer {
                 match message.read_buffer() {
                     Ok(description) => {
                         println!("Received an error message:");
-                        println!("\n{}\n", String::from_utf8(description).unwrap());
+                        println!("\n{}\n", String::from_utf8(description.to_vec()).unwrap());
                     }
                     _ => {}
                 }
@@ -461,7 +461,7 @@ pub mod transfer {
                         Some(&buffer[..16]),
                     )?);
 
-                    buffer.drain(..16);
+                    buffer = &buffer[16..];
                 }
 
                 match &mut self.crypter {
@@ -485,6 +485,10 @@ pub mod transfer {
                                 crypter.update(&buffer, &mut self.decrypt_buffer)?;
                             self.decrypt_buffer.truncate(bytes_decrypted);
 
+                            if bytes_decrypted == 0 {
+                                return self.read(buf);
+                            }
+
                             if bytes_decrypted > buf.len() {
                                 buf.copy_from_slice(&self.decrypt_buffer[..buf.len()]);
                                 self.decrypt_buffer.drain(..buf.len());
@@ -498,6 +502,9 @@ pub mod transfer {
                             }
                         } else {
                             let bytes_decrypted = crypter.update(&buffer, buf)?;
+                            if bytes_decrypted == 0 {
+                                return self.read(buf);
+                            }
                             self.print_stats(bytes_decrypted);
                             Ok(bytes_decrypted)
                         }
