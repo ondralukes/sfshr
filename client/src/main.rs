@@ -2,19 +2,16 @@ mod transfer;
 
 extern crate base64;
 extern crate openssl;
+extern crate tar;
 
 use crate::transfer::transfer::{Download, TransferError, Upload};
 use std::convert::TryInto;
 use std::env::args;
 use std::fs;
-use std::fs::File;
-use std::io::{stdin, stdout, Read, Seek, SeekFrom, Write};
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use std::time::Instant;
-
-const BUFFER_SIZE: usize = 1024 * 1024;
+use tar::{Archive, Builder};
 
 macro_rules! printinfoln {
     ($q:expr, $($x:expr), *) => {
@@ -31,6 +28,7 @@ macro_rules! printinfo {
         }
     };
 }
+
 fn main() {
     let mut args = args();
     args.next();
@@ -144,56 +142,16 @@ impl FormatSize for f64 {
     }
 }
 
-fn upload(addr: String, filepath: PathBuf, encrypt: bool, quiet: bool) {
-    let file = File::open(&filepath);
-    if file.is_err() {
-        printinfoln!(quiet, "Failed to open file: {}", file.err().unwrap());
-        exit(1);
-    }
+fn upload(addr: String, mut filepath: PathBuf, encrypt: bool, _quiet: bool) {
+    let mut upload = Upload::new(&addr, encrypt).unwrap_or_else(on_error);
+    let mut archive = Builder::new(upload);
 
-    let mut file = file.unwrap();
-    let file_size = file.metadata().unwrap().len();
-
-    let mut upload = Upload::new(&addr, encrypt, file_size).unwrap_or_else(on_error);
-
-    upload
-        .write_filename(filepath.file_name().unwrap().to_str().unwrap())
-        .unwrap_or_else(on_error);
-    let mut buf = Vec::new();
-    buf.resize(BUFFER_SIZE, 0);
-
-    let time = Instant::now();
-    loop {
-        let bytes_read = file.read(&mut buf).unwrap();
-        if bytes_read == 0 {
-            break;
-        }
-
-        upload.check_for_error().unwrap_or_else(on_error);
-        upload.send(&buf[..bytes_read]).unwrap_or_else(on_error);
-        let time = time.elapsed().as_micros() as f64;
-        let size = file.seek(SeekFrom::Current(0)).unwrap();
-        let speed = size as f64 / time * 1000000.0;
-        printinfoln!(
-            quiet,
-            "Uploaded {:^12} @ {:^12}  \x1b[1A\x1b[0G",
-            size.format_size(),
-            format!("{}/s", speed.format_size())
-        );
-    }
+    filepath = filepath.canonicalize().unwrap();
+    let root_path = filepath.components().last().unwrap();
+    archive.append_dir_all(root_path, &filepath).unwrap();
+    upload = archive.into_inner().unwrap();
 
     upload.finalize().unwrap_or_else(on_error);
-    upload.check_for_error().unwrap_or_else(on_error);
-    let time = time.elapsed().as_micros() as f64;
-    let size = file.seek(SeekFrom::Current(0)).unwrap();
-    let speed = size as f64 / time * 1000000.0;
-
-    printinfoln!(
-        quiet,
-        "Uploaded {:^12} @ {:^12}  \x1b[1A\x1b[0G",
-        size.format_size(),
-        format!("{}/s", speed.format_size())
-    );
 
     let mut download_key = Vec::new();
     download_key.extend_from_slice(&upload.id());
@@ -226,61 +184,14 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool, qui
     if encrypt {
         key = Some(download_key[32..].try_into().unwrap());
     }
-    let mut download =
+    let download =
         Download::new(addr, &download_key[..32].try_into().unwrap(), key).unwrap_or_else(on_error);
-    let mut file = File::create(".sfshr-temp").unwrap();
-    let time = Instant::now();
-    loop {
-        let (buf, cont) = download.read().unwrap_or_else(on_error);
-        if !cont {
-            break;
-        }
 
-        file.write_all(&buf).unwrap();
-        let time = time.elapsed().as_micros() as f64;
-        let size = file.seek(SeekFrom::Current(0)).unwrap();
-        let speed = size as f64 / time * 1000000.0;
+    let mut archive = Archive::new(download);
+    archive.unpack(".").unwrap();
 
-        printinfoln!(
-            quiet,
-            "Downloaded {:^12} @ {:^12}\x1b[1A\x1b[0G",
-            size.format_size(),
-            format!("{}/s", speed.format_size())
-        );
-    }
     printinfoln!(quiet, "");
-
-    let filename = download.filename();
-    if Path::new(&filename).exists() {
-        if !quiet {
-            loop {
-                printinfo!(
-                    quiet,
-                    "\x1b[1A\x1b[0G\x1b[KFile {} already exists. Replace? [yes/no]",
-                    filename
-                );
-                stdout().flush().unwrap();
-                let stdin = stdin();
-                let mut line = String::new();
-                stdin.read_line(&mut line).unwrap();
-                line.retain(|c| c != '\n' && c != '\r');
-                if line == "yes" {
-                    break;
-                }
-                if line == "no" {
-                    fs::remove_file(".sfshr-temp").unwrap();
-                    printinfoln!(quiet, "\x1b[1A\x1b[0G\x1b[KAborted");
-                    exit(1);
-                }
-            }
-        }
-    }
-    fs::rename(".sfshr-temp", &filename).unwrap();
-    printinfoln!(
-        quiet,
-        "\x1b[1A\x1b[0G\x1b[KSuccesfully downloaded {}",
-        &filename
-    );
+    printinfoln!(quiet, "\x1b[1A\x1b[0G\x1b[KSuccesfully downloaded");
 }
 
 fn on_error<T>(err: TransferError) -> T {

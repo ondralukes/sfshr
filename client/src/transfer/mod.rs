@@ -4,11 +4,11 @@ pub mod transfer {
     use rand::prelude::StdRng;
     use rand::{RngCore, SeedableRng};
     use simpletcp::simpletcp::{Message, MessageError, TcpStream};
-    use std::convert::TryInto;
-    use std::fmt;
     use std::fmt::{Display, Formatter};
+    use std::io::{ErrorKind, Read, Write};
     use std::net::ToSocketAddrs;
     use std::string::FromUtf8Error;
+    use std::{fmt, io};
 
     pub enum TransferError {
         NetworkError(simpletcp::simpletcp::Error),
@@ -63,11 +63,7 @@ pub mod transfer {
     }
 
     impl Upload {
-        pub fn new<A: ToSocketAddrs>(
-            addr: A,
-            encrypt: bool,
-            size: u64,
-        ) -> Result<Self, TransferError> {
+        pub fn new<A: ToSocketAddrs>(addr: A, encrypt: bool) -> Result<Self, TransferError> {
             let mut conn = TcpStream::connect(&addr)?;
             conn.wait_until_ready()?;
             let mut message = Message::new();
@@ -82,10 +78,10 @@ pub mod transfer {
                 }
                 Some(mut msg) => {
                     id = msg.read_buffer()?;
-                    let max_size = msg.read_u64()?;
-                    if size > max_size {
-                        return Err(TransferError::SizeLimitExceeded);
-                    }
+                    // let max_size = msg.read_u64()?;
+                    // if size > max_size {
+                    //     return Err(TransferError::SizeLimitExceeded);
+                    // }
                 }
             }
 
@@ -120,37 +116,6 @@ pub mod transfer {
                 id,
                 key: key_opt,
             })
-        }
-
-        pub fn write_filename(&mut self, name: &str) -> Result<(), TransferError> {
-            let mut buf = Vec::new();
-            let len = name.len() as u32;
-            let len_bytes = len.to_le_bytes();
-            buf.extend_from_slice(&len_bytes);
-            buf.extend_from_slice(name.as_bytes());
-            self.send(&buf)?;
-            Ok(())
-        }
-
-        pub fn send(&mut self, buffer: &[u8]) -> Result<(), TransferError> {
-            if buffer.len() > self.encrypt_buffer.len() - 256 {
-                self.encrypt_buffer.resize(buffer.len() + 256, 0);
-            }
-            let mut message = Message::new();
-            message.write_u8(1);
-            match &mut self.crypter {
-                None => {
-                    message.write_buffer(buffer);
-                }
-                Some(crypter) => {
-                    let bytes_encrypted = crypter.update(buffer, &mut self.encrypt_buffer)?;
-                    message.write_buffer(&self.encrypt_buffer[..bytes_encrypted]);
-                }
-            }
-
-            self.conn.write_blocking(&message)?;
-
-            Ok(())
         }
 
         pub fn finalize(&mut self) -> Result<(), TransferError> {
@@ -218,13 +183,51 @@ pub mod transfer {
         }
     }
 
+    impl Write for Upload {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            if buffer.len() > self.encrypt_buffer.len() - 256 {
+                self.encrypt_buffer.resize(buffer.len() + 256, 0);
+            }
+            let mut message = Message::new();
+            message.write_u8(1);
+            match &mut self.crypter {
+                None => {
+                    message.write_buffer(buffer);
+                }
+                Some(crypter) => {
+                    let bytes_encrypted = crypter.update(buffer, &mut self.encrypt_buffer)?;
+                    message.write_buffer(&self.encrypt_buffer[..bytes_encrypted]);
+                }
+            }
+
+            match self.conn.write_blocking(&message) {
+                Err(_) => {
+                    return Err(io::Error::new(ErrorKind::ConnectionReset, "NetworkError"));
+                }
+                _ => {}
+            }
+
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            unimplemented!();
+        }
+
+        fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+            return match self.write(buf) {
+                Ok(_) => Ok(()),
+                Err(err) => Err(err),
+            };
+        }
+    }
+
     pub struct Download {
         conn: TcpStream,
         crypter: Option<Crypter>,
         key: Option<[u8; 32]>,
         decrypt_buffer: Vec<u8>,
         finalized: bool,
-        filename: Vec<u8>,
     }
 
     impl Download {
@@ -245,40 +248,83 @@ pub mod transfer {
                 key,
                 decrypt_buffer: Vec::new(),
                 finalized: false,
-                filename: Vec::new(),
             })
         }
+    }
 
-        pub fn read(&mut self) -> Result<(Vec<u8>, bool), TransferError> {
+    impl Read for Download {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.decrypt_buffer.len() != 0 {
+                let mut bytes = self.decrypt_buffer.len();
+                if self.decrypt_buffer.len() > buf.len() {
+                    bytes = buf.len();
+                }
+                buf[..bytes].copy_from_slice(&self.decrypt_buffer[..bytes]);
+                self.decrypt_buffer.drain(..bytes);
+                return Ok(bytes);
+            }
+
             if self.finalized {
-                return Ok((Vec::new(), false));
+                return Ok(0);
             }
 
             let mut buffer;
-            let mut message = self.conn.read_blocking()?;
-            let cont = message.read_i8()?;
-            if cont == -1 {
+            let mut message;
+            match self.conn.read_blocking() {
+                Ok(msg) => {
+                    message = msg;
+                }
+                Err(_) => {
+                    return Err(io::Error::new(ErrorKind::ConnectionReset, "NetworkError"));
+                }
+            }
+            let cont;
+            match message.read_i8() {
+                Ok(v) => {
+                    cont = v;
+                }
+                Err(_) => {
+                    return Err(io::Error::new(ErrorKind::ConnectionReset, "NetworkError"));
+                }
+            }
+            return if cont == -1 {
                 match message.read_buffer() {
                     Ok(description) => {
                         println!("Received an error message:");
-                        println!("\n{}\n", String::from_utf8(description)?);
+                        println!("\n{}\n", String::from_utf8(description).unwrap());
                     }
                     _ => {}
                 }
-                return Err(TransferError::ServerError);
+                Err(io::Error::new(ErrorKind::ConnectionReset, "NetworkError"))
             } else if cont == 0 {
                 match &mut self.crypter {
                     None => {
-                        return Ok((Vec::new(), false));
+                        self.finalized = true;
+                        Ok(0)
                     }
                     Some(crypter) => {
-                        let bytes_decrypted = crypter.finalize(&mut self.decrypt_buffer)?;
                         self.finalized = true;
-                        buffer = self.decrypt_buffer[..bytes_decrypted].to_vec();
+                        if buf.len() < 16 {
+                            self.decrypt_buffer.resize(16, 0);
+                            crypter.finalize(&mut self.decrypt_buffer)?;
+                            buf.copy_from_slice(&self.decrypt_buffer[..buf.len()]);
+                            self.decrypt_buffer.drain(..buf.len());
+                            Ok(buf.len())
+                        } else {
+                            let bytes_decrypted = crypter.finalize(buf)?;
+                            Ok(bytes_decrypted)
+                        }
                     }
-                };
+                }
             } else {
-                buffer = message.read_buffer()?;
+                match message.read_buffer() {
+                    Ok(b) => {
+                        buffer = b;
+                    }
+                    Err(_) => {
+                        return Err(io::Error::new(ErrorKind::ConnectionReset, "NetworkError"));
+                    }
+                }
                 if self.key.is_some() && self.crypter.is_none() {
                     if buffer.len() < 16 {
                         panic!("IV split");
@@ -295,29 +341,40 @@ pub mod transfer {
                 }
 
                 match &mut self.crypter {
-                    None => {}
-                    Some(crypter) => {
-                        if self.decrypt_buffer.len() < buffer.len() + 256 {
-                            self.decrypt_buffer.resize(buffer.len() + 256, 0);
+                    None => {
+                        return if buffer.len() <= buf.len() {
+                            buf[..buffer.len()].copy_from_slice(&buffer);
+                            Ok(buffer.len())
+                        } else {
+                            buf.copy_from_slice(&buffer[..buf.len()]);
+                            self.decrypt_buffer.resize(buffer.len() - buf.len(), 0);
+                            self.decrypt_buffer.copy_from_slice(&buffer[buf.len()..]);
+                            Ok(buf.len())
                         }
-                        let bytes_decrypted = crypter.update(&buffer, &mut self.decrypt_buffer)?;
-
-                        buffer = self.decrypt_buffer[..bytes_decrypted].to_vec();
                     }
-                };
-            }
+                    Some(crypter) => {
+                        if buf.len() < buffer.len() + 16 {
+                            self.decrypt_buffer.resize(buffer.len() + 16, 0);
+                            let bytes_decrypted =
+                                crypter.update(&buffer, &mut self.decrypt_buffer)?;
+                            self.decrypt_buffer.truncate(bytes_decrypted);
 
-            if self.filename.is_empty() && !buffer.is_empty() {
-                let len = u32::from_le_bytes(buffer[..4].try_into().unwrap()) as usize;
-                self.filename.extend_from_slice(&buffer[4..4 + len]);
-                buffer = buffer[4 + len..].to_vec();
-            }
-
-            Ok((buffer, true))
-        }
-
-        pub fn filename(self) -> String {
-            String::from_utf8(self.filename).unwrap()
+                            if bytes_decrypted > buf.len() {
+                                buf.copy_from_slice(&self.decrypt_buffer[..buf.len()]);
+                                self.decrypt_buffer.drain(..buf.len());
+                                Ok(buf.len())
+                            } else {
+                                buf[..bytes_decrypted].copy_from_slice(&self.decrypt_buffer);
+                                self.decrypt_buffer.clear();
+                                Ok(bytes_decrypted)
+                            }
+                        } else {
+                            let bytes_decrypted = crypter.update(&buffer, buf)?;
+                            Ok(bytes_decrypted)
+                        }
+                    }
+                }
+            };
         }
     }
 }
