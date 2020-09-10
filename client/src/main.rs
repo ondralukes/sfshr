@@ -1,33 +1,19 @@
+#[macro_use]
 mod transfer;
 
 extern crate base64;
 extern crate openssl;
 extern crate tar;
 
-use crate::transfer::transfer::{Download, TransferError, Upload};
+use crate::transfer::transfer::{Download, Upload};
 use std::convert::TryInto;
 use std::env::args;
-use std::fs;
+use std::io::Error;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::{fmt, fs};
 use tar::{Archive, Builder};
-
-macro_rules! printinfoln {
-    ($q:expr, $($x:expr), *) => {
-        if !$q {
-        println!($($x,)*);
-        }
-    };
-}
-
-macro_rules! printinfo {
-    ($q:expr, $($x:expr), *) => {
-        if !$q {
-        print!($($x,)*);
-        }
-    };
-}
 
 fn main() {
     let mut args = args();
@@ -97,59 +83,25 @@ fn main() {
     }
 }
 
-trait FormatSize {
-    fn format_size(self) -> String;
-}
-
-impl FormatSize for u64 {
-    fn format_size(self) -> String {
-        const PREFIXES: [&str; 5] = ["", "Ki", "Mi", "Gi", "Ti"];
-
-        let mut i: f64 = 1.0;
-        let mut index = 0;
-        loop {
-            if (self as f64 / i) < 500.0 {
-                break;
-            }
-
-            i *= 1024.0;
-            index += 1;
-        }
-
-        format!("{:.3} {}B", self as f64 / i, PREFIXES[index])
-    }
-}
-
-impl FormatSize for f64 {
-    fn format_size(self) -> String {
-        const PREFIXES: [&str; 5] = ["", "Ki", "Mi", "Gi", "Ti"];
-
-        let mut i: f64 = 1.0;
-        let mut index = 0;
-        if !self.is_normal() {
-            return String::from("NaN");
-        }
-        loop {
-            if (self / i) < 500.0 {
-                break;
-            }
-
-            i *= 1024.0;
-            index += 1;
-        }
-
-        format!("{:.3} {}B", self as f64 / i, PREFIXES[index])
-    }
-}
-
-fn upload(addr: String, mut filepath: PathBuf, encrypt: bool, _quiet: bool) {
-    let mut upload = Upload::new(&addr, encrypt).unwrap_or_else(on_error);
+fn upload(addr: String, mut filepath: PathBuf, encrypt: bool, quiet: bool) {
+    let mut upload = Upload::new(&addr, encrypt, quiet).unwrap_or_else(on_error);
     let mut archive = Builder::new(upload);
 
+    match filepath.canonicalize() {
+        Ok(p) => {
+            filepath = p;
+        }
+        Err(err) => {
+            printinfoln!(quiet, "Failed to open file: {}", err);
+            exit(1);
+        }
+    }
     filepath = filepath.canonicalize().unwrap();
     let root_path = filepath.components().last().unwrap();
-    archive.append_dir_all(root_path, &filepath).unwrap();
-    upload = archive.into_inner().unwrap();
+    archive
+        .append_dir_all(root_path, &filepath)
+        .unwrap_or_else(on_error);
+    upload = archive.into_inner().unwrap_or_else(on_error);
 
     upload.finalize().unwrap_or_else(on_error);
 
@@ -188,13 +140,44 @@ fn download<A: ToSocketAddrs>(addr: A, download_key: Vec<u8>, encrypt: bool, qui
         Download::new(addr, &download_key[..32].try_into().unwrap(), key).unwrap_or_else(on_error);
 
     let mut archive = Archive::new(download);
-    archive.unpack(".").unwrap();
+    let mut iter = archive.entries().unwrap();
+    let mut first = iter.next().unwrap().unwrap();
+
+    let archive_root;
+
+    let first_path = Path::new(".").join(first.path().unwrap());
+    let mut fp_iter = first_path.iter();
+
+    //Skip '.'
+    fp_iter.next();
+    let first_path = Path::new(fp_iter.next().unwrap());
+    if first_path.exists() {
+        printinfoln!(
+            quiet,
+            "Cannot write to {:?}. Destination already exists.",
+            first_path
+        );
+        exit(1);
+    } else {
+        archive_root = first_path.to_str().unwrap().to_string();
+    }
+
+    first.unpack_in(".").unwrap();
+
+    for entry in iter {
+        let mut entry = entry.unwrap();
+        entry.unpack_in(".").unwrap();
+    }
 
     printinfoln!(quiet, "");
-    printinfoln!(quiet, "\x1b[1A\x1b[0G\x1b[KSuccesfully downloaded");
+    printinfoln!(
+        quiet,
+        "\x1b[1A\x1b[0G\x1b[KSuccesfully downloaded {:?}",
+        archive_root
+    );
 }
 
-fn on_error<T>(err: TransferError) -> T {
+fn on_error<E: fmt::Display, T>(err: E) -> T {
     let temp = Path::new(".sfshr-temp");
     if temp.exists() {
         fs::remove_file(temp).unwrap();

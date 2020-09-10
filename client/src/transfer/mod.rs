@@ -8,7 +8,26 @@ pub mod transfer {
     use std::io::{ErrorKind, Read, Write};
     use std::net::ToSocketAddrs;
     use std::string::FromUtf8Error;
+    use std::time::Instant;
     use std::{fmt, io};
+
+    #[macro_export]
+    macro_rules! printinfoln {
+    ($q:expr, $($x:expr), *) => {
+        if !$q {
+        println!($($x,)*);
+        }
+    };
+}
+
+    #[macro_export]
+    macro_rules! printinfo {
+    ($q:expr, $($x:expr), *) => {
+        if !$q {
+        print!($($x,)*);
+        }
+    };
+}
 
     pub enum TransferError {
         NetworkError(simpletcp::simpletcp::Error),
@@ -54,16 +73,74 @@ pub mod transfer {
         }
     }
 
+    pub trait FormatSize {
+        fn format_size(self) -> String;
+    }
+
+    impl FormatSize for u64 {
+        fn format_size(self) -> String {
+            const PREFIXES: [&str; 5] = ["", "Ki", "Mi", "Gi", "Ti"];
+
+            let mut i: f64 = 1.0;
+            let mut index = 0;
+            loop {
+                if (self as f64 / i) < 500.0 {
+                    break;
+                }
+
+                i *= 1024.0;
+                index += 1;
+            }
+
+            format!("{:.3} {}B", self as f64 / i, PREFIXES[index])
+        }
+    }
+
+    impl FormatSize for usize {
+        fn format_size(self) -> String {
+            (self as u64).format_size()
+        }
+    }
+
+    impl FormatSize for f64 {
+        fn format_size(self) -> String {
+            const PREFIXES: [&str; 5] = ["", "Ki", "Mi", "Gi", "Ti"];
+
+            let mut i: f64 = 1.0;
+            let mut index = 0;
+            if !self.is_normal() {
+                return String::from("NaN");
+            }
+            loop {
+                if (self / i) < 500.0 {
+                    break;
+                }
+
+                i *= 1024.0;
+                index += 1;
+            }
+
+            format!("{:.3} {}B", self as f64 / i, PREFIXES[index])
+        }
+    }
+
     pub struct Upload {
         conn: TcpStream,
         crypter: Option<Crypter>,
         encrypt_buffer: Vec<u8>,
         id: Vec<u8>,
         key: Option<[u8; 32]>,
+        uploaded: usize,
+        time: Instant,
+        quiet: bool,
     }
 
     impl Upload {
-        pub fn new<A: ToSocketAddrs>(addr: A, encrypt: bool) -> Result<Self, TransferError> {
+        pub fn new<A: ToSocketAddrs>(
+            addr: A,
+            encrypt: bool,
+            quiet: bool,
+        ) -> Result<Self, TransferError> {
             let mut conn = TcpStream::connect(&addr)?;
             conn.wait_until_ready()?;
             let mut message = Message::new();
@@ -87,6 +164,7 @@ pub mod transfer {
 
             let mut crypter = None;
             let mut key_opt = None;
+            let mut uploaded = 0;
             if encrypt {
                 let mut rng = StdRng::from_entropy();
                 let mut key = [0; 32];
@@ -107,6 +185,7 @@ pub mod transfer {
                 message.write_u8(1);
                 message.write_buffer(&iv);
                 conn.write_blocking(&message)?;
+                uploaded += iv.len();
             }
 
             Ok(Self {
@@ -115,6 +194,9 @@ pub mod transfer {
                 encrypt_buffer: vec![0; 256],
                 id,
                 key: key_opt,
+                uploaded,
+                quiet,
+                time: Instant::now(),
             })
         }
 
@@ -205,6 +287,21 @@ pub mod transfer {
                     return Err(io::Error::new(ErrorKind::ConnectionReset, "NetworkError"));
                 }
                 _ => {}
+            }
+
+            self.uploaded += buffer.len();
+            let time = self.time.elapsed().as_micros() as f64;
+            let speed = self.uploaded as f64 / time * 1000000.0;
+
+            printinfoln!(
+                self.quiet,
+                "Uploaded {:^12} @ {:^12}  \x1b[1A\x1b[0G",
+                self.uploaded.format_size(),
+                format!("{}/s", speed.format_size())
+            );
+
+            if self.check_for_error().is_err() {
+                return Err(io::Error::new(ErrorKind::ConnectionReset, "NetworkError"));
             }
 
             Ok(buffer.len())
