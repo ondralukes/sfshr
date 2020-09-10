@@ -481,6 +481,7 @@ pub mod thread_pool {
         thread_buffer.resize(1024 * 1024, 0);
         let mut clients = Vec::new();
         let mut fds = Vec::new();
+        let mut events = Vec::new();
         loop {
             match receiver.try_recv() {
                 Ok(message) => match message {
@@ -490,7 +491,7 @@ pub mod thread_pool {
                     ThreadMessage::Accept(mut socket) => {
                         if socket.get_ready().is_ok() {
                             clients.push(Client::new(socket, &params));
-                            fds = simpletcp::utils::get_fd_array(&clients);
+                            update_poll_params(&clients, &mut fds, &mut events);
                             sockets_alive.store(clients.len(), Release);
                         }
                     }
@@ -498,7 +499,7 @@ pub mod thread_pool {
                 Err(_) => {}
             }
 
-            let index = simpletcp::utils::poll_set_timeout(&mut fds, EV_POLLIN | EV_POLLOUT, 50);
+            let index = simpletcp::utils::poll_set_ev_timeout(&mut fds, &mut events, 50);
 
             match index {
                 None => {}
@@ -537,12 +538,30 @@ pub mod thread_pool {
                     if remove {
                         clients.remove(index as usize);
                         sockets_alive.store(clients.len(), Release);
-                        fds = simpletcp::utils::get_fd_array(&clients);
+                        update_poll_params(&clients, &mut fds, &mut events);
+                    } else {
+                        events[index as usize] = match client.state {
+                            ClientState::Idle => EV_POLLIN,
+                            ClientState::Upload(_) => EV_POLLIN,
+                            ClientState::Download(_) => EV_POLLOUT | EV_POLLIN,
+                        };
                     }
                 }
             }
         }
 
         println!("[Thread #{}] Terminating.", thread_id);
+    }
+
+    fn update_poll_params(clients: &Vec<Client>, fds: &mut Vec<i32>, events: &mut Vec<i16>) {
+        *fds = simpletcp::utils::get_fd_array(&clients);
+        events.clear();
+        for c in clients {
+            events.push(match c.state {
+                ClientState::Idle => EV_POLLIN,
+                ClientState::Upload(_) => EV_POLLIN,
+                ClientState::Download(_) => EV_POLLOUT | EV_POLLIN,
+            });
+        }
     }
 }
