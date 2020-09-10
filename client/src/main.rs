@@ -8,6 +8,7 @@ extern crate tar;
 use crate::transfer::transfer::{Download, Upload};
 use std::convert::TryInto;
 use std::env::args;
+use std::fs::File;
 use std::io::Error;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
@@ -98,9 +99,19 @@ fn upload(addr: String, mut filepath: PathBuf, encrypt: bool, quiet: bool) {
     }
     filepath = filepath.canonicalize().unwrap();
     let root_path = filepath.components().last().unwrap();
-    archive
-        .append_dir_all(root_path, &filepath)
-        .unwrap_or_else(on_error);
+    if filepath.is_dir() {
+        archive
+            .append_dir_all(root_path, &filepath)
+            .unwrap_or_else(on_error);
+    } else {
+        archive
+            .append_file(
+                root_path,
+                &mut File::open(&filepath).unwrap_or_else(on_error),
+            )
+            .unwrap_or_else(on_error);
+    }
+
     upload = archive.into_inner().unwrap_or_else(on_error);
 
     upload.finalize().unwrap_or_else(on_error);
