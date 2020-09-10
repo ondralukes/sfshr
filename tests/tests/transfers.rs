@@ -261,10 +261,84 @@ fn size_exceeded() {
     clean_up();
 }
 
+#[test]
+fn directory() {
+    let _guard = MUTEX.deref().lock().unwrap();
+    unsafe {
+        SERVER = Some(
+            Command::new("cargo")
+                .stderr(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .args(&["run", "--", "--config", "../tests/tests/normal-config"])
+                .current_dir("../server")
+                .spawn()
+                .unwrap_or_else(unwrap_clean_up),
+        );
+    }
+
+    wait_for_server();
+    generate_test_dir();
+    let sender = Command::new("cargo")
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--server",
+            "localhost:40788",
+            "test-dir",
+        ])
+        .current_dir("../client")
+        .spawn()
+        .unwrap_or_else(unwrap_clean_up);
+    let sender_output = sender.wait_with_output().unwrap_or_else(unwrap_clean_up);
+    if !sender_output.status.success() {
+        clean_up();
+        println!(
+            "---stdout---\n {}",
+            String::from_utf8(sender_output.stdout).unwrap()
+        );
+        panic!("Sender exited with non-zero exit code.");
+    }
+    remove_test_dir();
+    let mut link = String::from_utf8(sender_output.stdout).unwrap_or_else(unwrap_clean_up);
+    link = link.replace('\n', "");
+    let link_args: Vec<&str> = link.split(' ').collect();
+
+    let receiver = Command::new("cargo")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .args(&["run", "--", "--quiet"])
+        .args(&link_args[1..])
+        .current_dir("../client")
+        .spawn()
+        .unwrap();
+
+    let receiver_output = receiver.wait_with_output().unwrap_or_else(unwrap_clean_up);
+    if !receiver_output.status.success() {
+        clean_up();
+        println!(
+            "---stdout---\n {}",
+            String::from_utf8(receiver_output.stdout).unwrap()
+        );
+        panic!("Receiver exited with a non-zero exit code.");
+    }
+    check_test_dir();
+    clean_up();
+}
+
 fn remove_test_file() {
     let client_temp = Path::new("../client/test-file");
     if client_temp.exists() {
         fs::remove_file(client_temp).unwrap();
+    }
+}
+
+fn remove_test_dir() {
+    let p = Path::new("../client/test-dir");
+    if p.exists() {
+        fs::remove_dir_all(p).unwrap();
     }
 }
 
@@ -273,6 +347,27 @@ fn generate_test_file() {
     let mut buffer = Vec::new();
     buffer.resize(1024 * 1024 * 64, 12);
     file.write_all(&buffer).unwrap();
+}
+
+fn generate_test_dir() {
+    fs::create_dir_all("../client/test-dir/a/b/c").unwrap();
+    let mut file = File::create("../client/test-dir/file.a").unwrap();
+    file.write_all(&[1, 2, 3]).unwrap();
+    let mut file = File::create("../client/test-dir/a/b/c/file.d").unwrap();
+    file.write_all(&[4, 5, 6]).unwrap();
+}
+
+fn check_test_dir() {
+    let mut file = File::open("../client/test-dir/file.a").unwrap();
+    let mut buf = Vec::new();
+    assert_eq!(file.read_to_end(&mut buf).unwrap(), 3);
+    assert_eq!(buf, vec![1, 2, 3]);
+
+    buf.clear();
+
+    let mut file = File::open("../client/test-dir/a/b/c/file.d").unwrap();
+    assert_eq!(file.read_to_end(&mut buf).unwrap(), 3);
+    assert_eq!(buf, vec![4, 5, 6]);
 }
 
 fn check_test_file<P: AsRef<Path>>(path: P) {
@@ -294,6 +389,7 @@ fn unwrap_clean_up<T, E>(_: E) -> T {
 }
 
 fn clean_up() {
+    remove_test_dir();
     remove_test_file();
     let uploads = Path::new("../server/test-uploads");
     if uploads.exists() {
