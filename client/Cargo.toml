@@ -1,6 +1,6 @@
 [package]
 name = "sfshr"
-version = "0.1.0"
+version = "1.0.0"
 license = "MIT"
 description = "Command-line tool for secure, end-to-end encrypted file sharing"
 categories = ["command-line-utilities", "filesystem", "network-programming", "cryptography"]

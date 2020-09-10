@@ -41,7 +41,7 @@ fn main() {
                     println!(" -r [download key] - download file");
                     println!(" -t --tar [tarname] - store downloaded tar as [tarname], instead of unpacking it");
                     println!(" -n --no-encryption - do not encrypt or decrypt the file");
-                    println!(" -q --quiet - do not print anything (expect download key)");
+                    println!(" -q --quiet - do not print anything (except download key)");
                     println!(" -s --server [hostname:port] - specify sfshr server (default: 'ondralukes.cz:40788')");
                     exit(0);
                 } else if arg == "-q" || arg == "--quiet" {
