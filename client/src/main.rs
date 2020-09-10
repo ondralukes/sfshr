@@ -188,8 +188,8 @@ fn download<A: ToSocketAddrs>(
     if encrypt {
         key = Some(download_key[32..].try_into().unwrap());
     }
-    let mut download =
-        Download::new(addr, &download_key[..32].try_into().unwrap(), key).unwrap_or_else(on_error);
+    let mut download = Download::new(addr, &download_key[..32].try_into().unwrap(), key, quiet)
+        .unwrap_or_else(on_error);
 
     match keep_tar {
         None => {

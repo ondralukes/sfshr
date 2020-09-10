@@ -325,7 +325,10 @@ pub mod transfer {
         crypter: Option<Crypter>,
         key: Option<[u8; 32]>,
         decrypt_buffer: Vec<u8>,
+        downloaded: usize,
+        time: Instant,
         finalized: bool,
+        quiet: bool,
     }
 
     impl Download {
@@ -333,6 +336,7 @@ pub mod transfer {
             addr: A,
             id: &[u8; 32],
             key: Option<[u8; 32]>,
+            quiet: bool,
         ) -> Result<Self, TransferError> {
             let mut conn = TcpStream::connect(addr)?;
             let mut message = Message::new();
@@ -346,7 +350,24 @@ pub mod transfer {
                 key,
                 decrypt_buffer: Vec::new(),
                 finalized: false,
+                time: Instant::now(),
+                downloaded: 0,
+                quiet,
             })
+        }
+
+        fn print_stats(&mut self, n: usize) {
+            self.downloaded += n;
+            let time = self.time.elapsed().as_micros() as f64;
+            let size = self.downloaded;
+            let speed = size as f64 / time * 1000000.0;
+
+            printinfoln!(
+                self.quiet,
+                "Downloaded {:^12} @ {:^12}\x1b[1A\x1b[0G",
+                size.format_size(),
+                format!("{}/s", speed.format_size())
+            );
         }
     }
 
@@ -359,10 +380,12 @@ pub mod transfer {
                 }
                 buf[..bytes].copy_from_slice(&self.decrypt_buffer[..bytes]);
                 self.decrypt_buffer.drain(..bytes);
+                self.print_stats(bytes);
                 return Ok(bytes);
             }
 
             if self.finalized {
+                self.print_stats(0);
                 return Ok(0);
             }
 
@@ -398,6 +421,7 @@ pub mod transfer {
                 match &mut self.crypter {
                     None => {
                         self.finalized = true;
+                        self.print_stats(0);
                         Ok(0)
                     }
                     Some(crypter) => {
@@ -407,9 +431,11 @@ pub mod transfer {
                             crypter.finalize(&mut self.decrypt_buffer)?;
                             buf.copy_from_slice(&self.decrypt_buffer[..buf.len()]);
                             self.decrypt_buffer.drain(..buf.len());
+                            self.print_stats(buf.len());
                             Ok(buf.len())
                         } else {
                             let bytes_decrypted = crypter.finalize(buf)?;
+                            self.print_stats(bytes_decrypted);
                             Ok(bytes_decrypted)
                         }
                     }
@@ -442,11 +468,13 @@ pub mod transfer {
                     None => {
                         return if buffer.len() <= buf.len() {
                             buf[..buffer.len()].copy_from_slice(&buffer);
+                            self.print_stats(buffer.len());
                             Ok(buffer.len())
                         } else {
                             buf.copy_from_slice(&buffer[..buf.len()]);
                             self.decrypt_buffer.resize(buffer.len() - buf.len(), 0);
                             self.decrypt_buffer.copy_from_slice(&buffer[buf.len()..]);
+                            self.print_stats(buf.len());
                             Ok(buf.len())
                         }
                     }
@@ -460,14 +488,17 @@ pub mod transfer {
                             if bytes_decrypted > buf.len() {
                                 buf.copy_from_slice(&self.decrypt_buffer[..buf.len()]);
                                 self.decrypt_buffer.drain(..buf.len());
+                                self.print_stats(buf.len());
                                 Ok(buf.len())
                             } else {
                                 buf[..bytes_decrypted].copy_from_slice(&self.decrypt_buffer);
                                 self.decrypt_buffer.clear();
+                                self.print_stats(bytes_decrypted);
                                 Ok(bytes_decrypted)
                             }
                         } else {
                             let bytes_decrypted = crypter.update(&buffer, buf)?;
+                            self.print_stats(bytes_decrypted);
                             Ok(bytes_decrypted)
                         }
                     }
