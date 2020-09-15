@@ -11,6 +11,7 @@ pub mod config {
         uploads: String,
         max_size: u64,
         max_total_size: u64,
+        key_file: String,
     }
 
     impl Config {
@@ -25,6 +26,7 @@ pub mod config {
             let mut max_size = 1048576;
             let mut max_total_size = 268435456;
             let mut uploads = String::from("uploads");
+            let mut key_file = String::from("key");
             let mut file = file.unwrap();
             let mut str = String::new();
             file.read_to_string(&mut str).unwrap();
@@ -95,6 +97,8 @@ pub mod config {
                     max_total_size = parse.unwrap();
                 } else if key == "UPLOADS" {
                     uploads = String::from(value);
+                } else if key == "KEY_FILE" {
+                    key_file = String::from(value);
                 } else {
                     println!("Warning! Found unknown key {} in config file.", key);
                 }
@@ -106,6 +110,7 @@ pub mod config {
                 uploads,
                 max_size,
                 max_total_size,
+                key_file,
             }
         }
 
@@ -115,7 +120,7 @@ pub mod config {
         pub fn thread_count(&self) -> u64 {
             self.thread_count
         }
-        pub fn uploads(&self) -> &String {
+        pub fn uploads(&self) -> &str {
             &self.uploads
         }
         pub fn max_size(&self) -> u64 {
@@ -123,6 +128,9 @@ pub mod config {
         }
         pub fn max_total_size(&self) -> u64 {
             self.max_total_size
+        }
+        pub fn key_file(&self) -> &str {
+            &self.key_file
         }
     }
 
@@ -134,6 +142,7 @@ pub mod config {
                 uploads: self.uploads.clone(),
                 max_size: self.max_size,
                 max_total_size: self.max_total_size,
+                key_file: self.key_file.clone(),
             }
         }
     }

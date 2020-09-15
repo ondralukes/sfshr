@@ -25,6 +25,9 @@ fn main() {
     let mut quiet = false;
     let mut main_arg = None;
     let mut server = String::from("ondralukes.cz:40788");
+    let mut fingerprint = Some(
+        hex::decode("bbda8c529a2911aff003977130f4bb96496b2c71c3c31f634932857dab7c66a6").unwrap(),
+    );
 
     loop {
         match args.next() {
@@ -43,6 +46,10 @@ fn main() {
                     println!(" -n --no-encryption - do not encrypt or decrypt the file");
                     println!(" -q --quiet - do not print anything (except download key)");
                     println!(" -s --server [hostname:port] - specify sfshr server (default: 'ondralukes.cz:40788')");
+                    println!(" --no-fingerprint - do not verify server fingerprint");
+                    println!(
+                        " -f --fingerprint [fingerprint] - specify expected server fingerprint"
+                    );
                     exit(0);
                 } else if arg == "-q" || arg == "--quiet" {
                     quiet = true;
@@ -66,6 +73,18 @@ fn main() {
                             keep_tar = Some(val);
                         }
                     }
+                } else if arg == "--no-fingerprint" {
+                    fingerprint = None;
+                } else if arg == "-f" || arg == "--fingerprint" {
+                    match args.next() {
+                        None => {
+                            println!("Expected value for --fingerprint");
+                            exit(1);
+                        }
+                        Some(val) => {
+                            fingerprint = Some(hex::decode(val).unwrap());
+                        }
+                    }
                 } else {
                     main_arg = Some(arg);
                 }
@@ -80,7 +99,7 @@ fn main() {
         }
 
         let path = PathBuf::from(main_arg.unwrap());
-        upload(server, path, encrypt, quiet, keep_tar);
+        upload(server, path, encrypt, quiet, keep_tar, fingerprint);
     } else {
         if main_arg.is_none() {
             printinfoln!(quiet, "No download key specified!");
@@ -91,7 +110,14 @@ fn main() {
             printinfoln!(quiet, "Invalid download key format!");
             exit(1);
         }
-        download(server, download_key.unwrap(), encrypt, quiet, keep_tar);
+        download(
+            server,
+            download_key.unwrap(),
+            encrypt,
+            quiet,
+            keep_tar,
+            fingerprint,
+        );
     }
 }
 
@@ -101,9 +127,10 @@ fn upload(
     encrypt: bool,
     quiet: bool,
     keep_tar: Option<String>,
+    fingerprint: Option<Vec<u8>>,
 ) {
     let size = dir_size(&filepath);
-    let mut upload = Upload::new(&addr, encrypt, quiet, size).unwrap_or_else(on_error);
+    let mut upload = Upload::new(&addr, encrypt, quiet, size, fingerprint).unwrap_or_else(on_error);
     let mut archive = Builder::new(upload);
 
     match filepath.canonicalize() {
@@ -178,6 +205,7 @@ fn download<A: ToSocketAddrs>(
     encrypt: bool,
     quiet: bool,
     keep_tar: Option<String>,
+    fingerprint: Option<Vec<u8>>,
 ) {
     if (encrypt && download_key.len() != 64) || (!encrypt && download_key.len() != 32) {
         printinfoln!(quiet, "Invalid download key size!");
@@ -188,8 +216,14 @@ fn download<A: ToSocketAddrs>(
     if encrypt {
         key = Some(download_key[32..].try_into().unwrap());
     }
-    let mut download = Download::new(addr, &download_key[..32].try_into().unwrap(), key, quiet)
-        .unwrap_or_else(on_error);
+    let mut download = Download::new(
+        addr,
+        &download_key[..32].try_into().unwrap(),
+        key,
+        quiet,
+        fingerprint,
+    )
+    .unwrap_or_else(on_error);
 
     match keep_tar {
         None => {

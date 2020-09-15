@@ -15,7 +15,14 @@ THREAD_COUNT=8
 # Folder for uploaded files
 # Defaults to "uploads"
 
-UPLOADS=/var/sfshr/
+UPLOADS=/var/sfshr/uploads/
+
+
+# File with server key
+# New key will be generated if KEY_FILE does not exist
+# Defaults to "key"
+
+KEY_FILE=/var/sfshr/key
 
 
 # Maximal size of individual file
