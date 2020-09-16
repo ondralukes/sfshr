@@ -25,4 +25,6 @@ You can also upload whole directories.
 * `-t --tar [tarname]` - store downloaded tar as `[tarname]`, instead of unpacking it
 * `-n --no-encryption` - do not encrypt or decrypt the file
 * `-q --quiet` - do not print anything (except download key)
-* `-s --server [hostname:port]` - specify sfshr server (default: `ondralukes.cz:40788`
+* `-s --server [hostname:port]` - specify sfshr server (default: `ondralukes.cz:40788`)
+* `-f --fingerprint [fingerprint]` - specify expected server fingerprint  (default: `bbda8c52...`)
+*  `--no-fingerprint` - do not verify server fingerprint

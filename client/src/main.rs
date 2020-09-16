@@ -48,7 +48,7 @@ fn main() {
                     println!(" -s --server [hostname:port] - specify sfshr server (default: 'ondralukes.cz:40788')");
                     println!(" --no-fingerprint - do not verify server fingerprint");
                     println!(
-                        " -f --fingerprint [fingerprint] - specify expected server fingerprint"
+                        " -f --fingerprint [fingerprint] - specify expected server fingerprint  (default: 'bbda8c52...')"
                     );
                     exit(0);
                 } else if arg == "-q" || arg == "--quiet" {
