@@ -267,6 +267,7 @@ fn download<A: ToSocketAddrs>(
         Some(dest) => {
             let mut file = File::create(&dest).unwrap_or_else(on_error);
             io::copy(&mut download, &mut file).unwrap_or_else(on_error);
+            printinfoln!(quiet, "");
             printinfoln!(
                 quiet,
                 "\x1b[1A\x1b[0G\x1b[KSuccesfully downloaded {:?}",
