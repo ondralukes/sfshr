@@ -10,7 +10,8 @@ use crate::thread_pool::thread_pool::{FormatSize, ThreadPool};
 use simpletcp::simpletcp::TcpServer;
 use std::env::args;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::path::Path;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::thread::{sleep, spawn};
@@ -45,7 +46,22 @@ fn main() {
         file_checker(cfg_clone, total_size_clone);
     });
     let mut pool = ThreadPool::new(&cfg, &total_size);
-    let server = TcpServer::new("0.0.0.0:40788").unwrap();
+
+    let key;
+    let key_file = Path::new(cfg.key_file());
+    if key_file.exists() {
+        let mut key_file = File::open(key_file).unwrap();
+        let mut buf = Vec::new();
+        key_file.read_to_end(&mut buf).unwrap();
+        key = Some(buf);
+    } else {
+        key = None;
+    }
+    let server = TcpServer::new_with_key("0.0.0.0:40788", key.as_deref()).unwrap();
+    if key.is_none() {
+        let mut key_file = File::create(key_file).unwrap();
+        key_file.write_all(&server.key()).unwrap();
+    }
     println!("ready");
     loop {
         match server.accept_blocking() {

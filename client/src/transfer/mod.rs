@@ -35,6 +35,7 @@ pub mod transfer {
         EncryptionError,
         CorruptedMessage,
         SizeLimitExceeded,
+        FingerprintMismatch,
     }
 
     impl Display for TransferError {
@@ -45,6 +46,7 @@ pub mod transfer {
                 TransferError::EncryptionError => f.write_str("EncryptionError"),
                 TransferError::CorruptedMessage => f.write_str("CorruptedMessage"),
                 TransferError::SizeLimitExceeded => f.write_str("SizeLimitExceeded"),
+                TransferError::FingerprintMismatch => f.write_str("FingerprintMismatch"),
             }
         }
     }
@@ -141,9 +143,11 @@ pub mod transfer {
             encrypt: bool,
             quiet: bool,
             size: usize,
+            fingerprint: Option<Vec<u8>>,
         ) -> Result<Self, TransferError> {
             let mut conn = TcpStream::connect(&addr)?;
             conn.wait_until_ready()?;
+            verify_fingerprint(&conn, fingerprint)?;
             let mut message = Message::new();
             message.write_i32(0);
             conn.write_blocking(&message)?;
@@ -266,6 +270,26 @@ pub mod transfer {
         }
     }
 
+    fn verify_fingerprint(
+        conn: &TcpStream,
+        fingerprint: Option<Vec<u8>>,
+    ) -> Result<(), TransferError> {
+        match fingerprint {
+            None => {}
+            Some(f) => {
+                let received = conn.fingerprint();
+                if received != f[..32] || f.len() != 32 {
+                    println!("Fingerprint mismatch!");
+                    println!("-expected {}", hex::encode(f));
+                    println!("-received {}", hex::encode(received));
+                    return Err(TransferError::FingerprintMismatch);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     impl Write for Upload {
         fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
             if buffer.len() > self.encrypt_buffer.len() - 256 {
@@ -337,12 +361,14 @@ pub mod transfer {
             id: &[u8; 32],
             key: Option<[u8; 32]>,
             quiet: bool,
+            fingerprint: Option<Vec<u8>>,
         ) -> Result<Self, TransferError> {
             let mut conn = TcpStream::connect(addr)?;
             let mut message = Message::new();
             message.write_i32(1);
             message.write_buffer(id);
             conn.wait_until_ready()?;
+            verify_fingerprint(&conn, fingerprint)?;
             conn.write_blocking(&message)?;
             Ok(Self {
                 conn,

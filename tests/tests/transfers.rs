@@ -20,15 +20,7 @@ lazy_static! {
 fn encrypted_transfer() {
     let _guard = MUTEX.deref().lock().unwrap();
     unsafe {
-        SERVER = Some(
-            Command::new("cargo")
-                .stderr(Stdio::inherit())
-                .stdout(Stdio::piped())
-                .args(&["run", "--", "--config", "../tests/tests/normal-config"])
-                .current_dir("../server")
-                .spawn()
-                .unwrap_or_else(unwrap_clean_up),
-        );
+        SERVER = Some(start_server("../tests/tests/normal-config"));
     }
 
     wait_for_server();
@@ -42,6 +34,8 @@ fn encrypted_transfer() {
             "--quiet",
             "--server",
             "localhost:40788",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
             "test-file",
         ])
         .current_dir("../client")
@@ -64,7 +58,13 @@ fn encrypted_transfer() {
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .args(&["run", "--", "--quiet"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
+        ])
         .args(&link_args[1..])
         .current_dir("../client")
         .spawn()
@@ -87,15 +87,7 @@ fn encrypted_transfer() {
 fn unencrypted_transfer() {
     let _guard = MUTEX.deref().lock().unwrap();
     unsafe {
-        SERVER = Some(
-            Command::new("cargo")
-                .stderr(Stdio::inherit())
-                .stdout(Stdio::piped())
-                .args(&["run", "--", "--config", "../tests/tests/normal-config"])
-                .current_dir("../server")
-                .spawn()
-                .unwrap_or_else(unwrap_clean_up),
-        );
+        SERVER = Some(start_server("../tests/tests/normal-config"));
     }
     wait_for_server();
     generate_test_file();
@@ -108,6 +100,8 @@ fn unencrypted_transfer() {
             "--quiet",
             "--server",
             "localhost:40788",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
             "--no-encryption",
             "test-file",
         ])
@@ -131,7 +125,13 @@ fn unencrypted_transfer() {
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .args(&["run", "--", "--quiet"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
+        ])
         .args(&link_args[1..])
         .current_dir("../client")
         .spawn()
@@ -154,15 +154,7 @@ fn unencrypted_transfer() {
 fn expired() {
     let _guard = MUTEX.deref().lock().unwrap();
     unsafe {
-        SERVER = Some(
-            Command::new("cargo")
-                .stderr(Stdio::inherit())
-                .stdout(Stdio::piped())
-                .args(&["run", "--", "--config", "../tests/tests/expire-config"])
-                .current_dir("../server")
-                .spawn()
-                .unwrap_or_else(unwrap_clean_up),
-        );
+        SERVER = Some(start_server("../tests/tests/expire-config"));
     }
     wait_for_server();
     generate_test_file();
@@ -175,6 +167,8 @@ fn expired() {
             "--quiet",
             "--server",
             "localhost:40788",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
             "--no-encryption",
             "test-file",
         ])
@@ -199,7 +193,13 @@ fn expired() {
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .args(&["run", "--", "--quiet"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
+        ])
         .args(&link_args[1..])
         .current_dir("../client")
         .spawn()
@@ -221,15 +221,7 @@ fn expired() {
 fn size_exceeded() {
     let _guard = MUTEX.deref().lock().unwrap();
     unsafe {
-        SERVER = Some(
-            Command::new("cargo")
-                .stderr(Stdio::inherit())
-                .stdout(Stdio::piped())
-                .args(&["run", "--", "--config", "../tests/tests/size-exceed-config"])
-                .current_dir("../server")
-                .spawn()
-                .unwrap_or_else(unwrap_clean_up),
-        );
+        SERVER = Some(start_server("../tests/tests/size-exceed-config"));
     }
     wait_for_server();
     generate_test_file();
@@ -242,6 +234,8 @@ fn size_exceeded() {
             "--quiet",
             "--server",
             "localhost:40788",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
             "--no-encryption",
             "test-file",
         ])
@@ -265,15 +259,7 @@ fn size_exceeded() {
 fn directory() {
     let _guard = MUTEX.deref().lock().unwrap();
     unsafe {
-        SERVER = Some(
-            Command::new("cargo")
-                .stderr(Stdio::inherit())
-                .stdout(Stdio::piped())
-                .args(&["run", "--", "--config", "../tests/tests/normal-config"])
-                .current_dir("../server")
-                .spawn()
-                .unwrap_or_else(unwrap_clean_up),
-        );
+        SERVER = Some(start_server("../tests/tests/normal-config"));
     }
 
     wait_for_server();
@@ -287,6 +273,8 @@ fn directory() {
             "--quiet",
             "--server",
             "localhost:40788",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
             "test-dir",
         ])
         .current_dir("../client")
@@ -309,7 +297,13 @@ fn directory() {
     let receiver = Command::new("cargo")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .args(&["run", "--", "--quiet"])
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
+        ])
         .args(&link_args[1..])
         .current_dir("../client")
         .spawn()
@@ -325,6 +319,44 @@ fn directory() {
         panic!("Receiver exited with a non-zero exit code.");
     }
     check_test_dir();
+    clean_up();
+}
+
+#[test]
+fn fingerprint_mismatch() {
+    let _guard = MUTEX.deref().lock().unwrap();
+    unsafe {
+        SERVER = Some(start_server("../tests/tests/normal-config"));
+    }
+    wait_for_server();
+    generate_test_file();
+    let sender = Command::new("cargo")
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .args(&[
+            "run",
+            "--",
+            "--quiet",
+            "--server",
+            "localhost:40788",
+            "--fingerprint",
+            "0aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
+            "--no-encryption",
+            "test-file",
+        ])
+        .current_dir("../client")
+        .spawn()
+        .unwrap_or_else(unwrap_clean_up);
+    let sender_output = sender.wait_with_output().unwrap_or_else(unwrap_clean_up);
+    if sender_output.status.success() {
+        clean_up();
+        println!(
+            "---stdout---\n {}",
+            String::from_utf8(sender_output.stdout).unwrap()
+        );
+        panic!("Sender exited with a zero exit code.");
+    }
+    remove_test_file();
     clean_up();
 }
 
@@ -400,6 +432,23 @@ fn clean_up() {
             SERVER.as_mut().unwrap().kill().unwrap();
         }
     }
+}
+
+fn start_server(config: &str) -> Child {
+    Command::new("cargo")
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .args(&[
+            "run",
+            "--",
+            "--config",
+            config,
+            "--fingerprint",
+            "8aa10297d4d6e3534f834a64c60c749e4941d6731be45f4dbd1da221f25607f1",
+        ])
+        .current_dir("../server")
+        .spawn()
+        .unwrap_or_else(unwrap_clean_up)
 }
 
 fn wait_for_server() {
