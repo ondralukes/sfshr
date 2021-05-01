@@ -1,0 +1,26 @@
+version: 2
+updates:
+- package-ecosystem: cargo
+  directory: "/server"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 10
+  allow:
+  - dependency-type: direct
+  - dependency-type: indirect
+- package-ecosystem: cargo
+  directory: "/client"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 10
+  allow:
+  - dependency-type: direct
+  - dependency-type: indirect
+- package-ecosystem: cargo
+  directory: "/tests"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 10
+  allow:
+  - dependency-type: direct
+  - dependency-type: indirect
